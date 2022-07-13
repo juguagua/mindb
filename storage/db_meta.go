@@ -8,12 +8,11 @@ import (
 
 //保存数据库的一些信息
 type DBMeta struct {
-	ActiveWriteOff int64  `json:"active_write_off"` //当前数据文件的写偏移
-	UnusedSpace    uint64 `json:"unused_space"`     //未使用可回收的磁盘空间
+	ActiveWriteOff int64 `json:"active_write_off"` //当前数据文件的写偏移
 }
 
 // 加载数据库信息
-func LoadMeta(path string) (m *DBMeta) {
+func LoadMeta(path string) (m *DBMeta, err error) {
 	m = &DBMeta{}
 
 	file, err := os.OpenFile(path, os.O_RDONLY, 0600) // 只读权限打开path路径下的文件

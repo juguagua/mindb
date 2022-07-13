@@ -38,8 +38,8 @@ const (
 	//保存配置的文件名称
 	configSaveFile = string(os.PathSeparator) + "db.cfg"
 
-	//保存索引状态的文件名称
-	indexSaveFile = string(os.PathSeparator) + "db.idx"
+	////保存索引状态的文件名称
+	//indexSaveFile = string(os.PathSeparator) + "db.idx"
 
 	//保存数据库相关信息的文件名称
 	dbMetaSaveFile = string(os.PathSeparator) + "db.meta"
@@ -80,14 +80,14 @@ func Open(config Config) (*MinDB, error) {
 		}
 	}
 
-	//如果存在索引文件，则加载索引状态
-	skipList := index.NewSkipList()
-	if utils.Exist(config.DirPath + indexSaveFile) {
-		err := index.Build(skipList, config.DirPath+indexSaveFile) // 加载索引文件的信息到索引中
-		if err != nil {
-			return nil, err
-		}
-	}
+	////如果存在索引文件，则加载索引状态
+	//skipList := index.NewSkipList()
+	//if utils.Exist(config.DirPath + indexSaveFile) {
+	//	err := index.Build(skipList, config.DirPath+indexSaveFile) // 加载索引文件的信息到索引中
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//}
 
 	//加载数据文件
 	archFiles, activeFileId, err := storage.Build(config.DirPath, config.RwMethod, config.BlockSize)
@@ -100,7 +100,7 @@ func Open(config Config) (*MinDB, error) {
 	}
 
 	//加载数据库额外信息（meta）
-	meta := storage.LoadMeta(config.DirPath + dbMetaSaveFile)
+	meta, _ := storage.LoadMeta(config.DirPath + dbMetaSaveFile)
 
 	activeFile.Offset = meta.ActiveWriteOff // 更新当前活跃文件的写偏移
 
@@ -109,15 +109,15 @@ func Open(config Config) (*MinDB, error) {
 		archFiles:    archFiles,
 		config:       config,
 		activeFileId: activeFileId,
-		idxList:      skipList,
 		meta:         meta,
+		idxList:      index.NewSkipList(),
 		listIndex:    list.New(),
 		hashIndex:    hash.New(),
 		setIndex:     set.New(),
 		zsetIndex:    zset.New(),
 	}
 
-	//再加载List、Hash、Set、ZSet索引
+	//加载索引信息
 	if err := db.loadIdxFromFiles(); err != nil {
 		return nil, err
 	}
@@ -152,16 +152,14 @@ func (db *MinDB) Close() error {
 		return err
 	}
 
-	if err := db.saveIndexes(); err != nil {
-		return err
-	}
-
 	if err := db.saveMeta(); err != nil {
 		return err
 	}
 
-	db.activeFile = nil
-	db.idxList = nil
+	if err := db.activeFile.Close(true); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -183,16 +181,17 @@ func (db *MinDB) Remove(key []byte) error {
 		return err
 	}
 
-	//增加可回收的磁盘空间
-	e := db.idxList.Get(key) // 获取到索引信息
-	if e != nil {
-		idx := e.Value().(*index.Indexer)
-		if idx != nil {
-			db.meta.UnusedSpace += uint64(idx.EntrySize) //更新可回收的磁盘空间
-		}
-	}
+	////增加可回收的磁盘空间
+	//e := db.idxList.Get(key) // 获取到索引信息
+	//if e != nil {
+	//	idx := e.Value().(*index.Indexer)
+	//	if idx != nil {
+	//		db.meta.UnusedSpace += uint64(idx.EntrySize) //更新可回收的磁盘空间
+	//	}
+	//}
 
 	//删除其在内存中的索引
+	e := db.idxList.Get(key)
 	if e != nil {
 		db.idxList.Remove(key)
 	}
@@ -200,9 +199,10 @@ func (db *MinDB) Remove(key []byte) error {
 }
 
 //重新组织磁盘中的数据，回收磁盘空间
+// TODO
 func (db *MinDB) Reclaim() error {
 
-	if db.meta.UnusedSpace < db.config.ReclaimThreshold {
+	if len(db.archFiles) < db.config.ReclaimThreshold {
 		return ErrReclaimUnreached
 	}
 
@@ -266,10 +266,10 @@ func (db *MinDB) Reclaim() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	//重新保存索引
-	if err := db.saveIndexes(); err != nil {
-		return err
-	}
+	////重新保存索引
+	//if err := db.saveIndexes(); err != nil {
+	//	return err
+	//}
 
 	if success {
 
@@ -284,7 +284,6 @@ func (db *MinDB) Reclaim() error {
 		}
 
 		//更新数据库相关信息
-		db.meta.UnusedSpace = 0
 		db.archFiles = newArchFiles
 	}
 
@@ -334,11 +333,11 @@ func (db *MinDB) saveConfig() (err error) {
 	return
 }
 
-// 持久化索引状态
-func (db *MinDB) saveIndexes() error {
-	idxPath := db.config.DirPath + indexSaveFile
-	return index.Store(db.idxList, idxPath)
-}
+//// 持久化索引状态
+//func (db *MinDB) saveIndexes() error {
+//	idxPath := db.config.DirPath + indexSaveFile
+//	return index.Store(db.idxList, idxPath)
+//}
 
 // 持久化数据库信息
 func (db *MinDB) saveMeta() error {
@@ -392,14 +391,14 @@ func (db *MinDB) store(e *storage.Entry) error {
 			db.meta.ActiveWriteOff = 0
 		}
 	}
-
-	//如果key已经存在，则原来的值被舍弃，所以需要新增可回收的磁盘空间值
-	if e := db.idxList.Get(e.Meta.Key); e != nil {
-		item := e.Value().(*index.Indexer)
-		if item != nil {
-			db.meta.UnusedSpace += uint64(item.EntrySize)
-		}
-	}
+	//
+	////如果key已经存在，则原来的值被舍弃，所以需要新增可回收的磁盘空间值
+	//if e := db.idxList.Get(e.Meta.Key); e != nil {
+	//	item := e.Value().(*index.Indexer)
+	//	if item != nil {
+	//		db.meta.UnusedSpace += uint64(item.EntrySize)
+	//	}
+	//}
 
 	//写入数据至文件中
 	if err := db.activeFile.Write(e); err != nil {

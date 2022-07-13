@@ -70,12 +70,12 @@ func (db *MinDB) HGetAll(key []byte) [][]byte {
 // 返回被成功移除的元素个数
 func (db *MinDB) HDel(key []byte, field ...[]byte) (res int, err error) {
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
 	if field == nil || len(field) == 0 {
 		return
 	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
 	for _, f := range field {
 		if ok := db.hashIndex.HDel(string(key), string(f)); ok {

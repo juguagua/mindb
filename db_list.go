@@ -115,12 +115,13 @@ func (db *MinDB) LRem(key, value []byte, count int) (int, error) {
 		if err := db.store(e); err != nil {
 			return res, err
 		}
-
 	}
 
 	return res, nil
 }
 
+// 将值 val 插入到列表 key 当中，位于值 pivot 之前或之后
+// 如果命令执行成功，返回插入操作完成之后，列表的长度。 如果没有找到 pivot ，返回 -1
 func (db *MinDB) LInsert(key string, option list.InsertOption, pivot, val []byte) error {
 
 	if err := db.checkKeyValue([]byte(key), val); err != nil {
@@ -143,7 +144,7 @@ func (db *MinDB) LInsert(key string, option list.InsertOption, pivot, val []byte
 		buf.Write([]byte(opt))
 
 		e := storage.NewEntry([]byte(key), val, buf.Bytes(), List, ListLInsert)
-		if _, err := db.store(e); err != nil {
+		if err := db.store(e); err != nil {
 			return err
 		}
 	}
@@ -151,26 +152,28 @@ func (db *MinDB) LInsert(key string, option list.InsertOption, pivot, val []byte
 	return nil
 }
 
-func (db *MinDB) LSet(key []byte, idx int, val []byte) error {
+//将列表 key 下标为 index 的元素的值设置为 val
+//bool返回值表示操作是否成功
+func (db *MinDB) LSet(key []byte, idx int, val []byte) (bool, error) {
 
 	if err := db.checkKeyValue(key, val); err != nil {
-		return err
+		return false, err
 	}
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if res := db.listIndex.LSet(string(key), idx, val); res {
-		i := strconv.Itoa(idx)
-		e := storage.NewEntry(key, val, []byte(i), List, ListLSet)
-		if _, err := db.store(e); err != nil {
-			return err
-		}
+	i := strconv.Itoa(idx)
+	e := storage.NewEntry(key, val, []byte(i), List, ListLSet)
+	if err := db.store(e); err != nil {
+		return false, err
 	}
 
-	return nil
+	res := db.listIndex.LSet(string(key), idx, val)
+	return res, nil
 }
 
+// 对一个列表进行修剪(trim)，让列表只保留指定区间内的元素，不在指定区间之内的元素都将被删除
 func (db *MinDB) LTrim(key []byte, start, end int) error {
 
 	db.mu.Lock()
@@ -183,7 +186,7 @@ func (db *MinDB) LTrim(key []byte, start, end int) error {
 		buf.Write([]byte(strconv.Itoa(end)))
 
 		e := storage.NewEntry(key, nil, buf.Bytes(), List, ListLTrim)
-		if _, err := db.store(e); err != nil {
+		if err := db.store(e); err != nil {
 			return err
 		}
 	}
@@ -191,6 +194,9 @@ func (db *MinDB) LTrim(key []byte, start, end int) error {
 	return nil
 }
 
+// 返回列表 key 中指定区间内的元素，区间以偏移量 start 和 end 指定
+// 如果 start 下标比列表的最大下标(len-1)还要大，那么 LRange 返回一个空列表
+// 如果 end 下标比 len 还要大，则将 end 的值设置为 len - 1
 func (db *MinDB) LRange(key []byte, start, end int) ([][]byte, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -202,6 +208,7 @@ func (db *MinDB) LRange(key []byte, start, end int) ([][]byte, error) {
 	return db.listIndex.LRange(string(key), start, end), nil
 }
 
+// 返回指定key的列表中的元素个数
 func (db *MinDB) LLen(key []byte) int {
 
 	db.mu.RLock()
