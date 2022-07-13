@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"mindb/ds/skiplist"
+	"mindb/ds/list"
 	"mindb/index"
 	"mindb/storage"
 	"mindb/utils"
@@ -27,7 +26,9 @@ var (
 
 	ErrCfgNotExist = errors.New("mindb: the config file not exist")
 
-	ErrReclaimUnreached = errors.New("unused space not reach the threshold")
+	ErrReclaimUnreached = errors.New("mindb: unused space not reach the threshold")
+
+	ErrExtraContainsSeparator = errors.New("rosedb: extra contains separator \\0")
 )
 
 const (
@@ -42,13 +43,17 @@ const (
 
 	//回收磁盘空间时的临时目录
 	reclaimPath = string(os.PathSeparator) + "mindb_reclaim"
+
+	//额外信息的分隔符，用于存储一些额外的信息（因此一些操作的value中不能包含此分隔符）
+	ExtraSeparator = "\\0"
 )
 
 type (
 	MinDB struct {
 		activeFile   *storage.DBFile
 		archFiles    ArchivedFiles
-		idxList      *skiplist.SkipList
+		idxList      *index.SkipList
+		listIndex    *list.List
 		config       Config
 		activeFileId uint32
 		mu           sync.RWMutex
@@ -70,11 +75,11 @@ func Open(config Config) (*MinDB, error) {
 	}
 
 	//如果存在索引文件，则加载索引状态
-	skipList := skiplist.New()
+	skipList := index.NewSkipList()
 	if utils.Exist(config.DirPath + indexSaveFile) {
 		err := index.Build(skipList, config.DirPath+indexSaveFile) // 加载索引文件的信息到索引中
 		if err != nil {
-			log.Println("load index error ", err)
+			return nil, err
 		}
 	}
 
@@ -93,14 +98,15 @@ func Open(config Config) (*MinDB, error) {
 
 	activeFile.Offset = meta.ActiveWriteOff // 更新当前活跃文件的写偏移
 
-	return &MinDB{
+	db := &MinDB{
 		activeFile:   activeFile,
 		archFiles:    archFiles,
 		config:       config,
 		activeFileId: activeFileId,
 		idxList:      skipList,
 		meta:         meta,
-	}, nil
+		listIndex:    list.New(),
+	}
 }
 
 //根据配置重新打开数据库
@@ -319,7 +325,7 @@ func (db *MinDB) Reclaim() error {
 		return ErrReclaimUnreached
 	}
 
-	if db.idxList.Size <= 0 {
+	if db.idxList.Len <= 0 {
 		return nil
 	}
 
@@ -339,7 +345,7 @@ func (db *MinDB) Reclaim() error {
 	)
 
 	//遍历所有的key，将数据写入到临时文件中
-	db.idxList.Foreach(func(e *skiplist.Element) bool {
+	db.idxList.Foreach(func(e *index.Element) bool {
 		idx := e.Value().(*index.Indexer) // 得到索引信息
 
 		if idx != nil && db.archFiles[idx.FileId] != nil { // 如果该文件存在

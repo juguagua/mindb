@@ -12,48 +12,86 @@ var (
 )
 
 const (
-	//keySize, valueSize, crc32 均为 uint32 类型，各占 4 字节
-	//4 + 4 + 4 = 12
-	entryHeaderSize = 12
+	//keySize, valueSize, ExtraSize, crc32 均为 uint32 类型，各占 4 字节
+	//Type 和 Mark 占 2 + 2
+	//4 + 4 + 4 + 4 + 2 + 2 = 20
+	entryHeaderSize = 20
 )
 
-type Entry struct {
-	Key       []byte
-	Value     []byte
-	keySize   uint32
-	valueSize uint32
-	crc32     uint32
+//Value的数据结构类型
+const (
+	String uint16 = iota
+	List
+	Hash
+	Set
+	ZSet
+)
+
+type (
+	Entry struct {
+		Meta  *Meta
+		Type  uint16 // 类型
+		Mark  uint16
+		crc32 uint32
+	}
+
+	Meta struct {
+		Key       []byte
+		Value     []byte
+		Extra     []byte
+		KeySize   uint32
+		ValueSize uint32
+		ExtraSize uint32
+	}
+)
+
+func NewEntry(key, value, extra []byte, t, mark uint16) *Entry {
+	return &Entry{
+		Meta: &Meta{
+			Key:       key,
+			Value:     value,
+			Extra:     extra,
+			KeySize:   uint32(len(key)),
+			ValueSize: uint32(len(value)),
+			ExtraSize: uint32(len(extra)),
+		},
+		Type: t,
+		Mark: mark,
+	}
 }
 
-func NewEntry(key, value []byte) *Entry {
-	return &Entry{
-		Key:       key,
-		Value:     value,
-		keySize:   uint32(len(key)),
-		valueSize: uint32(len(value)),
-	}
+func NewEntryNoExtra(key, value []byte, t, mark uint16) *Entry {
+	return NewEntry(key, value, nil, t, mark)
 }
 
 // 返回entry的大小（包括header和key和value）
 func (e *Entry) Size() uint32 {
-	return entryHeaderSize + e.keySize + e.valueSize
+	return entryHeaderSize + e.Meta.KeySize + e.Meta.ValueSize + e.Meta.ExtraSize
 }
 
 //对Entry进行编码，返回字节数组
 func (e *Entry) Encode() ([]byte, error) {
-	if e == nil || e.keySize == 0 {
+	if e == nil || e.Meta.KeySize == 0 {
 		return nil, ErrInvalidEntry
 	}
 
-	ks, vs := e.keySize, e.valueSize
+	ks, vs := e.Meta.KeySize, e.Meta.ValueSize
+	es := e.Meta.ExtraSize
 	buf := make([]byte, e.Size())
 
-	binary.BigEndian.PutUint32(buf[4:8], ks)                       // 第二部分 写入key的大小
-	binary.BigEndian.PutUint32(buf[8:12], vs)                      // 第三部分 写入value的大小
-	copy(buf[entryHeaderSize:entryHeaderSize+ks], e.Key)           // 第四部分 写入key
-	copy(buf[entryHeaderSize+ks:(entryHeaderSize+ks+vs)], e.Value) // 第五部分 写入value
+	binary.BigEndian.PutUint32(buf[4:8], ks)   //  写入key的大小
+	binary.BigEndian.PutUint32(buf[8:12], vs)  //  写入value的大小
+	binary.BigEndian.PutUint32(buf[12:16], es) // 写入extra信息的大小
+	binary.BigEndian.PutUint16(buf[16:18], e.Type)
+	binary.BigEndian.PutUint16(buf[18:20], e.Mark)
+	copy(buf[entryHeaderSize:entryHeaderSize+ks], e.Meta.Key)           //  写入key
+	copy(buf[entryHeaderSize+ks:(entryHeaderSize+ks+vs)], e.Meta.Value) // 写入value
 
-	crc := crc32.ChecksumIEEE(e.Value)        // 计算校验和
+	if es > 0 { // 如果有extra info，就将其写入到buf中
+		copy(buf[(entryHeaderSize+ks+vs):(entryHeaderSize+ks+vs+es)], e.Meta.Extra)
+	}
+
+	crc := crc32.ChecksumIEEE(e.Meta.Value)   // 计算校验和
 	binary.BigEndian.PutUint32(buf[0:4], crc) // 第一部分 写入校验和 crc
 
 	return buf, nil
@@ -61,22 +99,21 @@ func (e *Entry) Encode() ([]byte, error) {
 
 //解码字节数组，返回Entry
 func Decode(buf []byte) (*Entry, error) {
-	ks := binary.BigEndian.Uint32(buf[4:8])                        // 取出第二部分 key的大小
-	vs := binary.BigEndian.Uint32(buf[8:12])                       // 取出第三部分 value的大小
-	key := buf[entryHeaderSize : entryHeaderSize+ks]               // 取出第四部分 key
-	value := buf[entryHeaderSize+ks : (entryHeaderSize + ks + vs)] // 取出第五部分 vlaue
-	crc := binary.BigEndian.Uint32(buf[0:4])                       // 取出第一部分 校验和 crc
-
-	checkCrc := crc32.ChecksumIEEE(value)
-	if checkCrc != crc { // 检查校验和是否正确
-		return nil, ErrInvalidCrc
-	}
+	ks := binary.BigEndian.Uint32(buf[4:8])  // 取出 key的大小
+	vs := binary.BigEndian.Uint32(buf[8:12]) // 取出 value的大小
+	es := binary.BigEndian.Uint32(buf[12:16])
+	t := binary.BigEndian.Uint16(buf[16:18])
+	mark := binary.BigEndian.Uint16(buf[18:20])
+	crc := binary.BigEndian.Uint32(buf[0:4]) // 取出 校验和 crc
 
 	return &Entry{
-		keySize:   ks,
-		valueSize: vs,
-		Key:       key,
-		Value:     value,
-		crc32:     crc,
+		Meta: &Meta{
+			KeySize:   ks,
+			ValueSize: vs,
+			ExtraSize: es,
+		},
+		Type:  t,
+		Mark:  mark,
+		crc32: crc,
 	}, nil
 }
