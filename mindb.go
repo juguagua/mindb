@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"mindb/ds/hash"
 	"mindb/ds/list"
+	"mindb/ds/set"
+	"mindb/ds/zset"
 	"mindb/index"
 	"mindb/storage"
 	"mindb/utils"
@@ -54,6 +57,9 @@ type (
 		archFiles    ArchivedFiles
 		idxList      *index.SkipList
 		listIndex    *list.List
+		hashIndex    *hash.Hash
+		setIndex     *set.Set
+		zsetIndex    *zset.SortedSet
 		config       Config
 		activeFileId uint32
 		mu           sync.RWMutex
@@ -106,7 +112,17 @@ func Open(config Config) (*MinDB, error) {
 		idxList:      skipList,
 		meta:         meta,
 		listIndex:    list.New(),
+		hashIndex:    hash.New(),
+		setIndex:     set.New(),
+		zsetIndex:    zset.New(),
 	}
+
+	//再加载List、Hash、Set、ZSet索引
+	if err := db.loadIdxFromFiles(); err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 //根据配置重新打开数据库
@@ -158,141 +174,6 @@ func (db *MinDB) Sync() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return db.activeFile.Sync()
-}
-
-//新增数据，如果存在则更新
-func (db *MinDB) Set(key, value []byte) error {
-
-	if err := db.checkKeyValue(key, value); err != nil {
-		return err
-	}
-
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	e := storage.NewEntry(key, value) // 封装一个entry
-
-	config := db.config
-
-	// 如果数据文件空间不够，则关闭该文件，并新打开一个文件
-	if db.activeFile.Offset+int64(e.Size()) > config.BlockSize {
-		if err := db.activeFile.Close(true); err != nil { // 关闭当前activeFile
-			return err
-		}
-
-		//保存旧的active文件到archFiles中
-		db.archFiles[db.activeFileId] = db.activeFile
-
-		activeFileId := db.activeFileId + 1 // 新的activeFileId在之前文件id上加一
-		if dbFile, err := storage.NewDBFile(config.DirPath, activeFileId, config.RwMethod, config.BlockSize); err != nil {
-			return err
-		} else { // 新建一个文件
-			db.activeFile = dbFile
-			db.activeFileId = activeFileId
-			db.meta.ActiveWriteOff = 0
-		}
-	}
-
-	//如果key已经存在，则原来的值被舍弃，所以需要新增可回收的磁盘空间值
-	if e := db.idxList.Get(key); e != nil {
-		item := e.Value().(*index.Indexer)
-		if item != nil {
-			db.meta.UnusedSpace += uint64(item.EntrySize) // 新增可回收的磁盘空间值
-		}
-	}
-
-	//数据索引
-	idx := &index.Indexer{
-		Key:       key,
-		FileId:    db.activeFileId,
-		EntrySize: e.Size(),
-		Offset:    db.activeFile.Offset,
-		KeySize:   uint32(len(key)),
-	}
-
-	//写入数据（entry）至文件中
-	if err := db.activeFile.Write(e); err != nil {
-		return err
-	}
-	db.meta.ActiveWriteOff = db.activeFile.Offset // 更新meta中的写offset
-
-	//数据持久化
-	if config.Sync {
-		if err := db.activeFile.Sync(); err != nil {
-			return err
-		}
-	}
-
-	if config.IdxMode == KeyValueRamMode { // 如果开启了key value都在内存中的模式就把value也放在索引中
-		idx.Value = value
-		idx.ValueSize = uint32(len(value))
-	}
-
-	//存储索引至内存的索引结构中
-	db.idxList.Put(key, idx)
-
-	return nil
-}
-
-// 如果key存在，则将value追加至原来的value末尾 如果key不存在，则相当于Set方法
-func (db *MinDB) Append(key, value []byte) error {
-
-	if err := db.checkKeyValue(key, value); err != nil {
-		return err
-	}
-
-	e, err := db.Get(key)
-	if err != nil {
-		return err
-	}
-
-	if e != nil {
-		e = append(e, value...)
-	} else {
-		e = value
-	}
-
-	return db.Set(key, e)
-}
-
-func (db *MinDB) Get(key []byte) ([]byte, error) {
-	keySize := uint32(len(key))
-	if keySize == 0 {
-		return nil, ErrEmptyKey
-	}
-
-	node := db.idxList.Get(key) // 在索引表中查找目标key所对应的节点
-	if node == nil {
-		return nil, ErrKeyNotExist
-	}
-
-	idx := node.Value().(*index.Indexer) // 类型断言为 indexer
-	if idx == nil {
-		return nil, ErrNilIndexer
-	}
-
-	db.mu.RLock() // 加读锁进行操作
-	defer db.mu.RUnlock()
-
-	//如果key和value均在内存中，则取内存中的value
-	if db.config.IdxMode == KeyValueRamMode {
-		return idx.Value, nil
-	}
-
-	//如果只有key在内存中，那么需要从db file中获取value
-	if db.config.IdxMode == KeyOnlyRamMode {
-		df := db.activeFile
-		if idx.FileId != db.activeFileId {
-			df = db.archFiles[idx.FileId]
-		}
-		if e, err := df.Read(idx.Offset, int64(idx.EntrySize)); err != nil { // 根据offset和size进行读取
-			return nil, err
-		} else {
-			return e.Value, nil
-		}
-	}
-
-	return nil, ErrKeyNotExist
 }
 
 //删除数据
@@ -362,7 +243,7 @@ func (db *MinDB) Reclaim() error {
 				newArchFiles[activeFileId] = df // 新建一个数据文件
 			}
 
-			entry, err := db.archFiles[idx.FileId].Read(idx.Offset, int64(idx.EntrySize)) // 读取当前索引对应的entry
+			entry, err := db.archFiles[idx.FileId].Read(idx.Offset) // 读取当前索引对应的entry
 			if err != nil {
 				success = false
 				return false
@@ -420,7 +301,7 @@ func (db *MinDB) Backup(dir string) (err error) {
 }
 
 // 检查key value是否符合规范
-func (db *MinDB) checkKeyValue(key, value []byte) error {
+func (db *MinDB) checkKeyValue(key []byte, value ...[]byte) error {
 	keySize := uint32(len(key))
 	if keySize == 0 {
 		return ErrEmptyKey
@@ -431,9 +312,10 @@ func (db *MinDB) checkKeyValue(key, value []byte) error {
 		return ErrKeyTooLarge
 	}
 
-	valueSize := uint32(len(value))
-	if valueSize > config.MaxValueSize {
-		return ErrValueTooLarge
+	for _, v := range value {
+		if uint32(len(v)) > config.MaxValueSize {
+			return ErrValueTooLarge
+		}
 	}
 
 	return nil
@@ -462,4 +344,76 @@ func (db *MinDB) saveIndexes() error {
 func (db *MinDB) saveMeta() error {
 	metaPath := db.config.DirPath + dbMetaSaveFile
 	return db.meta.Store(metaPath)
+}
+
+// 建立索引
+func (db *MinDB) buildIndex(e *storage.Entry, idx *index.Indexer) error {
+
+	if db.config.IdxMode == KeyValueRamMode { // 如果开启了key value都在内存中的模式就把value也放在索引中
+		idx.Meta.Value = e.Meta.Value
+		idx.Meta.ValueSize = uint32(len(e.Meta.Value))
+	}
+	switch e.Type {
+	case storage.String: // 如果是string，就把当前索引加入到跳表中
+		db.idxList.Put(idx.Meta.Key, idx)
+	case storage.List: // 如果是list，就建立list索引
+		db.buildListIndex(idx, e.Mark)
+	case storage.Hash:
+		db.buildHashIndex(idx, e.Mark)
+	case storage.Set:
+		db.buildSetIndex(idx, e.Mark)
+	case storage.ZSet:
+		db.buildZsetIndex(idx, e.Mark)
+	}
+
+	return nil
+}
+
+//写数据
+func (db *MinDB) store(e *storage.Entry) error {
+
+	//如果数据文件空间不够，则关闭该文件，并新打开一个文件
+	config := db.config
+	if db.activeFile.Offset+int64(e.Size()) > config.BlockSize {
+		if err := db.activeFile.Close(true); err != nil {
+			return err
+		}
+
+		//保存旧的文件
+		db.archFiles[db.activeFileId] = db.activeFile
+
+		activeFileId := db.activeFileId + 1
+
+		if dbFile, err := storage.NewDBFile(config.DirPath, activeFileId, config.RwMethod, config.BlockSize); err != nil {
+			return err
+		} else {
+			db.activeFile = dbFile
+			db.activeFileId = activeFileId
+			db.meta.ActiveWriteOff = 0
+		}
+	}
+
+	//如果key已经存在，则原来的值被舍弃，所以需要新增可回收的磁盘空间值
+	if e := db.idxList.Get(e.Meta.Key); e != nil {
+		item := e.Value().(*index.Indexer)
+		if item != nil {
+			db.meta.UnusedSpace += uint64(item.EntrySize)
+		}
+	}
+
+	//写入数据至文件中
+	if err := db.activeFile.Write(e); err != nil {
+		return err
+	}
+
+	db.meta.ActiveWriteOff = db.activeFile.Offset
+
+	//数据持久化
+	if config.Sync {
+		if err := db.activeFile.Sync(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

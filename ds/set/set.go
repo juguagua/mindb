@@ -13,14 +13,12 @@ func New() *Set {
 }
 
 // 添加元素，返回添加后的集合中的元素个数
-func (s *Set) SAdd(key string, members ...[]byte) int {
+func (s *Set) SAdd(key string, member []byte) int {
 	if !s.exist(key) {
 		s.record[key] = make(map[string]bool)
 	}
 
-	for _, val := range members {
-		s.record[key][string(val)] = true
-	}
+	s.record[key][string(member)] = true
 
 	return len(s.record[key])
 }
@@ -89,21 +87,19 @@ func (s *Set) SRandMember(key string, count int) [][]byte {
 	return val
 }
 
-// 移除集合 key 中的一个或多个 member 元素，不存在的 member 元素会被忽略
-// 返回被成功移除的元素的数量，不包括被忽略的元素
-func (s *Set) SRem(key string, members ...[]byte) (res int) {
+// 移除集合 key 中的一个 member 元素，不存在的 member 元素会被忽略
+// 返回是否被成功移除
+func (s *Set) SRem(key string, member []byte) bool {
 	if !s.exist(key) {
-		return 0
+		return false
 	}
 
-	for _, val := range members {
-		if ok := s.record[key][string(val)]; ok {
-			delete(s.record[key], string(val))
-			res++
-		}
+	if ok := s.record[key][string(member)]; ok {
+		delete(s.record[key], string(member))
+		return true
 	}
 
-	return
+	return false
 }
 
 // 将 member 元素从 src 集合移动到 dst 集合

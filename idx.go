@@ -2,6 +2,9 @@ package mindb
 
 import (
 	"io"
+	"mindb/ds/list"
+	"mindb/index"
+	"mindb/utils"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,14 +38,34 @@ const (
 	ListLTrim
 )
 
-//建立列表索引
+//哈希相关操作标识
+const (
+	HashHSet uint16 = iota
+	HashHDel
+)
+
+//集合相关操作标识
+const (
+	SetSAdd uint16 = iota
+	SetSRem
+	SetSMove
+)
+
+//有序集合相关操作标识
+const (
+	ZSetZAdd uint16 = iota
+	ZSetZIncrBy
+	ZSetZRem
+)
+
+// 建立列表索引
 func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 	if db.listIndex == nil || idx == nil {
 		return
 	}
 
 	key := string(idx.Meta.Key)
-	switch opt {
+	switch opt { // 根据操作类型对列表执行相应操作
 	case ListLPush:
 		db.listIndex.LPush(key, idx.Meta.Value)
 	case ListLPop:
@@ -80,15 +103,73 @@ func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 	}
 }
 
-//从文件中加载List、Set、Hash、ZSet索引
-func (db *RoseDB) loadIdxFromFiles() error {
+//建立哈希索引
+func (db *MinDB) buildHashIndex(idx *index.Indexer, opt uint16) {
+
+	if db.hashIndex == nil || idx == nil {
+		return
+	}
+
+	key := string(idx.Meta.Key)
+	switch opt {
+	case HashHSet:
+		db.hashIndex.HSet(key, string(idx.Meta.Extra), idx.Meta.Value)
+	case HashHDel:
+		db.hashIndex.HDel(key, string(idx.Meta.Extra))
+	}
+}
+
+//建立集合索引
+func (db *MinDB) buildSetIndex(idx *index.Indexer, opt uint16) {
+
+	if db.hashIndex == nil || idx == nil {
+		return
+	}
+
+	key := string(idx.Meta.Key)
+	switch opt {
+	case SetSAdd:
+		db.setIndex.SAdd(key, idx.Meta.Value)
+	case SetSRem:
+		db.setIndex.SRem(key, idx.Meta.Value)
+	case SetSMove:
+		extra := idx.Meta.Extra
+		db.setIndex.SMove(key, string(extra), idx.Meta.Value)
+	}
+}
+
+//建立有序集合索引
+func (db *MinDB) buildZsetIndex(idx *index.Indexer, opt uint16) {
+
+	if db.hashIndex == nil || idx == nil {
+		return
+	}
+
+	key := string(idx.Meta.Key)
+	switch opt {
+	case ZSetZAdd:
+		if score, err := utils.StrToFloat64(string(idx.Meta.Extra)); err == nil {
+			db.zsetIndex.ZAdd(key, score, string(idx.Meta.Value))
+		}
+	case ZSetZIncrBy:
+		extra := string(idx.Meta.Extra)
+		if increment, err := utils.StrToFloat64(extra); err == nil {
+			db.zsetIndex.ZIncrBy(key, increment, string(idx.Meta.Value))
+		}
+	case ZSetZRem:
+		db.zsetIndex.ZRem(key, string(idx.Meta.Value))
+	}
+}
+
+// 从文件中加载List、Set、Hash、ZSet索引
+func (db *MinDB) loadIdxFromFiles() error {
 	if db.archFiles == nil && db.activeFile == nil {
 		return nil
 	}
 
 	var fileIds []int
 	dbFile := make(ArchivedFiles)
-	for k, v := range db.archFiles {
+	for k, v := range db.archFiles { // 从db的archFiles中取出所有的archFiles
 		dbFile[k] = v
 		fileIds = append(fileIds, int(k))
 	}
@@ -96,27 +177,27 @@ func (db *RoseDB) loadIdxFromFiles() error {
 	dbFile[db.activeFileId] = db.activeFile
 	fileIds = append(fileIds, int(db.activeFileId))
 
-	sort.Ints(fileIds)
+	sort.Ints(fileIds) // 对file id进行排序后遍历
 	for i := 0; i < len(fileIds); i++ {
 		fid := uint32(fileIds[i])
 		df := dbFile[fid]
 		var offset int64 = 0
 
-		for {
-			if e, err := df.Read(offset); err == nil {
-				idx := &index.Indexer{
+		for { // 读当前文件
+			if e, err := df.Read(offset); err == nil { // 从当前数据文件中取出entry
+				idx := &index.Indexer{ // 根据该entry构建索引结构
 					Meta:      e.Meta,
 					FileId:    fid,
 					EntrySize: e.Size(),
 					Offset:    offset,
 				}
-				offset += int64(e.Size())
+				offset += int64(e.Size()) // 更新offset
 
-				if err := db.buildIndex(e, idx); err != nil {
+				if err := db.buildIndex(e, idx); err != nil { // 建立索引
 					return err
 				}
 			} else {
-				if err == io.EOF {
+				if err == io.EOF { // 该文件读完就退出
 					break
 				}
 
