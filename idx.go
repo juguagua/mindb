@@ -192,7 +192,7 @@ func (db *MinDB) loadIdxFromFiles() error {
 		df := dbFile[fid]
 		var offset int64 = 0
 
-		for { // 读当前文件
+		for offset <= db.config.BlockSize { // 读当前文件
 			if e, err := df.Read(offset); err == nil { // 从当前数据文件中取出entry
 				idx := &index.Indexer{ // 根据该entry构建索引结构
 					Meta:      e.Meta,
