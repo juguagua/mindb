@@ -1,6 +1,7 @@
 package mindb
 
 import (
+	"bytes"
 	"mindb/index"
 	"mindb/storage"
 	"strings"
@@ -32,7 +33,7 @@ func (db *MinDB) Set(key, value []byte) error {
 		},
 		FileId:    db.activeFileId,
 		EntrySize: e.Size(),
-		Offset:    db.activeFile.Offset,
+		Offset:    db.activeFile.Offset - int64(e.Size()),
 	}
 
 	if err := db.buildIndex(e, idx); err != nil { // 后写内存索引
@@ -47,8 +48,8 @@ func (db *MinDB) Set(key, value []byte) error {
 //若键 key 已经存在， 则 SetNx 命令不做任何动作
 func (db *MinDB) SetNx(key, value []byte) error {
 
-	if oldVal, err := db.Get(key); oldVal != nil || err != nil {
-		return err
+	if exist := db.StrExists(key); exist {
+		return nil
 	}
 
 	return db.Set(key, value)
@@ -183,7 +184,7 @@ func (db *MinDB) StrRem(key []byte) error {
 	return nil
 }
 
-//根据前缀查找所有匹配的value
+//根据前缀查找所有匹配的 key 对应的 value
 //参数 limit 和 offset 控制取数据的范围，类似关系型数据库中的分页操作
 //如果 limit 为负数，则返回所有满足条件的结果
 func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err error) {
@@ -229,5 +230,31 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 			limit--
 		}
 	}
+	return
+}
+
+//范围扫描，查找 key 从 start 到 end 之间的数据
+func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
+
+	node := db.idxList.Get(start)
+	if node == nil {
+		return nil, ErrKeyNotExist
+	}
+
+	for bytes.Compare(node.Key(), end) <= 0 {
+		var value []byte
+		if db.config.IdxMode == KeyOnlyRamMode {
+			value, err = db.Get(node.Key())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			value = node.Value().(*index.Indexer).Meta.Value
+		}
+
+		val = append(val, value)
+		node = node.Next()
+	}
+
 	return
 }
