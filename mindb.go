@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"mindb/ds/hash"
-	"mindb/ds/list"
-	"mindb/ds/set"
-	"mindb/ds/zset"
 	"mindb/index"
 	"mindb/storage"
 	"mindb/utils"
@@ -65,11 +61,11 @@ type (
 		activeFile   *storage.DBFile //当前活跃文件
 		activeFileId uint32          //活跃文件id
 		archFiles    ArchivedFiles   //已封存文件
-		idxList      *index.SkipList //字符串索引列表
-		listIndex    *list.List      //list索引列表
-		hashIndex    *hash.Hash      //hash索引列表
-		setIndex     *set.Set        //集合索引列表
-		zsetIndex    *zset.SortedSet //有序集合索引列表
+		strIndex     *StrIdx         //字符串索引列表
+		listIndex    *ListIdx        //list索引列表
+		hashIndex    *HashIdx        //hash索引列表
+		setIndex     *SetIdx         //集合索引列表
+		zsetIndex    *ZsetIdx        //有序集合索引列表
 		config       Config          //数据库配置
 		mu           sync.RWMutex    //mutex
 		meta         *storage.DBMeta //数据库配置额外信息
@@ -114,11 +110,11 @@ func Open(config Config) (*MinDB, error) {
 		config:       config,
 		activeFileId: activeFileId,
 		meta:         meta,
-		idxList:      index.NewSkipList(),
-		listIndex:    list.New(),
-		hashIndex:    hash.New(),
-		setIndex:     set.New(),
-		zsetIndex:    zset.New(),
+		strIndex:     newStrIdx(),
+		listIndex:    newListIdx(),
+		hashIndex:    newHashIdx(),
+		setIndex:     newSetIdx(),
+		zsetIndex:    newZsetIdx(),
 		expires:      expires,
 	}
 
@@ -245,11 +241,11 @@ func (db *MinDB) Reclaim() (err error) {
 
 				//更新字符串索引
 				if entry.Type == String {
-					item := db.idxList.Get(entry.Meta.Key)
+					item := db.strIndex.idxList.Get(entry.Meta.Key)
 					idx := item.Value().(*index.Indexer)
 					idx.Offset = df.Offset - int64(entry.Size())
 					idx.FileId = activeFileId
-					db.idxList.Put(idx.Meta.Key, idx)
+					db.strIndex.idxList.Put(idx.Meta.Key, idx)
 				}
 			}
 		}

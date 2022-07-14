@@ -72,9 +72,9 @@ func (db *MinDB) buildStringIndex(idx *index.Indexer, opt uint16) {
 
 	switch opt {
 	case StringSet:
-		db.idxList.Put(idx.Meta.Key, idx)
+		db.strIndex.idxList.Put(idx.Meta.Key, idx)
 	case StringRem:
-		db.idxList.Remove(idx.Meta.Key)
+		db.strIndex.idxList.Remove(idx.Meta.Key)
 	}
 }
 
@@ -87,16 +87,16 @@ func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 	key := string(idx.Meta.Key)
 	switch opt { // 根据操作类型对列表执行相应操作
 	case ListLPush:
-		db.listIndex.LPush(key, idx.Meta.Value)
+		db.listIndex.indexes.LPush(key, idx.Meta.Value)
 	case ListLPop:
-		db.listIndex.LPop(key)
+		db.listIndex.indexes.LPop(key)
 	case ListRPush:
-		db.listIndex.RPush(key, idx.Meta.Value)
+		db.listIndex.indexes.RPush(key, idx.Meta.Value)
 	case ListRPop:
-		db.listIndex.RPop(key)
+		db.listIndex.indexes.RPop(key)
 	case ListLRem:
 		if count, err := strconv.Atoi(string(idx.Meta.Extra)); err == nil {
-			db.listIndex.LRem(key, idx.Meta.Value, count)
+			db.listIndex.indexes.LRem(key, idx.Meta.Value, count)
 		}
 	case ListLInsert:
 		extra := string(idx.Meta.Extra)
@@ -104,12 +104,12 @@ func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 		if len(s) == 2 {
 			pivot := []byte(s[0])
 			if opt, err := strconv.Atoi(s[1]); err == nil {
-				db.listIndex.LInsert(string(idx.Meta.Key), list.InsertOption(opt), pivot, idx.Meta.Value)
+				db.listIndex.indexes.LInsert(string(idx.Meta.Key), list.InsertOption(opt), pivot, idx.Meta.Value)
 			}
 		}
 	case ListLSet:
 		if i, err := strconv.Atoi(string(idx.Meta.Extra)); err == nil {
-			db.listIndex.LSet(key, i, idx.Meta.Value)
+			db.listIndex.indexes.LSet(key, i, idx.Meta.Value)
 		}
 	case ListLTrim:
 		extra := string(idx.Meta.Extra)
@@ -118,7 +118,7 @@ func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 			start, _ := strconv.Atoi(s[0])
 			end, _ := strconv.Atoi(s[1])
 
-			db.listIndex.LTrim(string(idx.Meta.Key), start, end)
+			db.listIndex.indexes.LTrim(string(idx.Meta.Key), start, end)
 		}
 	}
 }
@@ -133,9 +133,9 @@ func (db *MinDB) buildHashIndex(idx *index.Indexer, opt uint16) {
 	key := string(idx.Meta.Key)
 	switch opt {
 	case HashHSet:
-		db.hashIndex.HSet(key, string(idx.Meta.Extra), idx.Meta.Value)
+		db.hashIndex.indexes.HSet(key, string(idx.Meta.Extra), idx.Meta.Value)
 	case HashHDel:
-		db.hashIndex.HDel(key, string(idx.Meta.Extra))
+		db.hashIndex.indexes.HDel(key, string(idx.Meta.Extra))
 	}
 }
 
@@ -149,12 +149,12 @@ func (db *MinDB) buildSetIndex(idx *index.Indexer, opt uint16) {
 	key := string(idx.Meta.Key)
 	switch opt {
 	case SetSAdd:
-		db.setIndex.SAdd(key, idx.Meta.Value)
+		db.setIndex.indexes.SAdd(key, idx.Meta.Value)
 	case SetSRem:
-		db.setIndex.SRem(key, idx.Meta.Value)
+		db.setIndex.indexes.SRem(key, idx.Meta.Value)
 	case SetSMove:
 		extra := idx.Meta.Extra
-		db.setIndex.SMove(key, string(extra), idx.Meta.Value)
+		db.setIndex.indexes.SMove(key, string(extra), idx.Meta.Value)
 	}
 }
 
@@ -169,10 +169,10 @@ func (db *MinDB) buildZsetIndex(idx *index.Indexer, opt uint16) {
 	switch opt {
 	case ZSetZAdd:
 		if score, err := utils.StrToFloat64(string(idx.Meta.Extra)); err == nil {
-			db.zsetIndex.ZAdd(key, score, string(idx.Meta.Value))
+			db.zsetIndex.indexes.ZAdd(key, score, string(idx.Meta.Value))
 		}
 	case ZSetZRem:
-		db.zsetIndex.ZRem(key, string(idx.Meta.Value))
+		db.zsetIndex.indexes.ZRem(key, string(idx.Meta.Value))
 	}
 }
 

@@ -6,10 +6,20 @@ import (
 	"mindb/index"
 	"mindb/storage"
 	"strings"
+	"sync"
 	"time"
 )
 
 //---------字符串相关操作接口-----------
+
+type StrIdx struct {
+	mu      sync.RWMutex
+	idxList *index.SkipList
+}
+
+func newStrIdx() *StrIdx {
+	return &StrIdx{idxList: index.NewSkipList()}
+}
 
 // Set 将字符串值 value 关联到 key
 // 如果 key 已经持有其他值，SET 就覆写旧值
@@ -69,7 +79,7 @@ func (db *MinDB) Get(key []byte) ([]byte, error) {
 		return nil, ErrEmptyKey
 	}
 
-	node := db.idxList.Get(key) // 从索引（跳表）中查找
+	node := db.strIndex.idxList.Get(key) // 从索引（跳表）中查找
 	if node == nil {
 		return nil, ErrKeyNotExist
 	}
@@ -79,8 +89,8 @@ func (db *MinDB) Get(key []byte) ([]byte, error) {
 		return nil, ErrNilIndexer
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.strIndex.mu.RLock()
+	defer db.strIndex.mu.RUnlock()
 
 	//判断是否过期
 	if db.expireIfNeeded(key) {
@@ -166,10 +176,10 @@ func (db *MinDB) StrLen(key []byte) int {
 		return 0
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.strIndex.mu.RLock()
+	defer db.strIndex.mu.RUnlock()
 
-	e := db.idxList.Get(key)
+	e := db.strIndex.idxList.Get(key)
 	if e != nil {
 		if db.expireIfNeeded(key) {
 			return 0
@@ -188,10 +198,10 @@ func (db *MinDB) StrExists(key []byte) bool {
 		return false
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.strIndex.mu.RLock()
+	defer db.strIndex.mu.RUnlock()
 
-	exist := db.idxList.Exist(key)
+	exist := db.strIndex.idxList.Exist(key)
 	if exist && !db.expireIfNeeded(key) {
 		return true
 	}
@@ -204,10 +214,10 @@ func (db *MinDB) StrRem(key []byte) error {
 		return err
 	}
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.strIndex.mu.Lock()
+	defer db.strIndex.mu.Unlock()
 
-	if ele := db.idxList.Remove(key); ele != nil {
+	if ele := db.strIndex.idxList.Remove(key); ele != nil {
 		delete(db.expires, string(key))
 		e := storage.NewEntryNoExtra(key, nil, String, StringRem)
 		if err := db.store(e); err != nil {
@@ -235,10 +245,10 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 		return
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.strIndex.mu.RLock()
+	defer db.strIndex.mu.RUnlock()
+	e := db.strIndex.idxList.FindPrefix([]byte(prefix))
 
-	e := db.idxList.FindPrefix([]byte(prefix))
 	if limit > 0 {
 		for i := 0; i < offset && e != nil && strings.HasPrefix(string(e.Key()), prefix); i++ {
 			e = e.Next()
@@ -275,13 +285,13 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 // RangeScan 范围扫描，查找 key 从 start 到 end 之间的数据
 func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 
-	node := db.idxList.Get(start)
+	node := db.strIndex.idxList.Get(start)
 	if node == nil {
 		return nil, ErrKeyNotExist
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.strIndex.mu.RLock()
+	defer db.strIndex.mu.RUnlock()
 
 	for bytes.Compare(node.Key(), end) <= 0 {
 		if db.expireIfNeeded(node.Key()) {
@@ -314,8 +324,8 @@ func (db *MinDB) Expire(key []byte, seconds uint32) (err error) {
 		return ErrInvalidTtl
 	}
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.strIndex.mu.Lock()
+	defer db.strIndex.mu.Unlock()
 
 	deadline := uint32(time.Now().Unix()) + seconds
 	db.expires[string(key)] = deadline
@@ -324,8 +334,9 @@ func (db *MinDB) Expire(key []byte, seconds uint32) (err error) {
 
 // Persist 清除key的过期时间
 func (db *MinDB) Persist(key []byte) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+
+	db.strIndex.mu.Lock()
+	defer db.strIndex.mu.Unlock()
 
 	delete(db.expires, string(key))
 }
@@ -363,7 +374,7 @@ func (db *MinDB) expireIfNeeded(key []byte) (expired bool) {
 		delete(db.expires, string(key))
 
 		//删除索引及数据
-		if ele := db.idxList.Remove(key); ele != nil {
+		if ele := db.strIndex.idxList.Remove(key); ele != nil {
 			e := storage.NewEntryNoExtra(key, nil, String, StringRem)
 			if err := db.store(e); err != nil {
 				log.Printf("remove expired key err [%+v] [%+v]\n", key, err)
@@ -378,8 +389,8 @@ func (db *MinDB) doSet(key, value []byte) (err error) {
 		return err
 	}
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.strIndex.mu.Lock()
+	defer db.strIndex.mu.Unlock()
 
 	e := storage.NewEntryNoExtra(key, value, String, StringSet)
 	if err := db.store(e); err != nil {

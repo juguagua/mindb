@@ -1,11 +1,22 @@
 package mindb
 
 import (
+	"mindb/ds/zset"
 	"mindb/storage"
 	"mindb/utils"
+	"sync"
 )
 
 //有序集合相关操作接口
+
+type ZsetIdx struct {
+	mu      sync.RWMutex
+	indexes *zset.SortedSet
+}
+
+func newZsetIdx() *ZsetIdx {
+	return &ZsetIdx{indexes: zset.New()}
+}
 
 // ZAdd 将 member 元素及其 score 值加入到有序集 key 当中
 func (db *MinDB) ZAdd(key []byte, score float64, member []byte) error {
@@ -14,8 +25,8 @@ func (db *MinDB) ZAdd(key []byte, score float64, member []byte) error {
 		return err
 	}
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.zsetIndex.mu.Lock()
+	defer db.zsetIndex.mu.Unlock()
 
 	extra := []byte(utils.Float64ToStr(score))
 	e := storage.NewEntry(key, member, extra, ZSet, ZSetZAdd)
@@ -23,26 +34,26 @@ func (db *MinDB) ZAdd(key []byte, score float64, member []byte) error {
 		return err
 	}
 
-	db.zsetIndex.ZAdd(string(key), score, string(member))
+	db.zsetIndex.indexes.ZAdd(string(key), score, string(member))
 	return nil
 }
 
 // ZScore 返回集合key中对应member的score值，如果不存在则返回负无穷
 func (db *MinDB) ZScore(key, member []byte) float64 {
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZScore(string(key), string(member))
+	return db.zsetIndex.indexes.ZScore(string(key), string(member))
 }
 
 // ZCard 返回指定集合key中的元素个数
 func (db *MinDB) ZCard(key []byte) int {
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZCard(string(key))
+	return db.zsetIndex.indexes.ZCard(string(key))
 }
 
 // ZRank 返回有序集 key 中成员 member 的排名。其中有序集成员按 score 值递增(从小到大)顺序排列
@@ -53,10 +64,10 @@ func (db *MinDB) ZRank(key, member []byte) int64 {
 		return -1
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRank(string(key), string(member))
+	return db.zsetIndex.indexes.ZRank(string(key), string(member))
 }
 
 // ZRevRank 返回有序集 key 中成员 member 的排名。其中有序集成员按 score 值递减(从大到小)排序
@@ -67,10 +78,10 @@ func (db *MinDB) ZRevRank(key, member []byte) int64 {
 		return -1
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRevRank(string(key), string(member))
+	return db.zsetIndex.indexes.ZRevRank(string(key), string(member))
 }
 
 // ZIncrBy 为有序集 key 的成员 member 的 score 值加上增量 increment
@@ -81,10 +92,10 @@ func (db *MinDB) ZIncrBy(key []byte, increment float64, member []byte) (float64,
 		return increment, err
 	}
 
-	db.mu.Lock()
-	db.mu.Unlock()
+	db.zsetIndex.mu.Lock()
+	defer db.zsetIndex.mu.Unlock()
 
-	increment = db.zsetIndex.ZIncrBy(string(key), increment, string(member))
+	increment = db.zsetIndex.indexes.ZIncrBy(string(key), increment, string(member))
 
 	extra := utils.Float64ToStr(increment)
 	e := storage.NewEntry(key, member, []byte(extra), ZSet, ZSetZAdd)
@@ -103,10 +114,10 @@ func (db *MinDB) ZRange(key []byte, start, stop int) []interface{} {
 		return nil
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRange(string(key), start, stop)
+	return db.zsetIndex.indexes.ZRange(string(key), start, stop)
 }
 
 // ZRevRange 返回有序集 key 中，指定区间内的成员，其中成员的位置按 score 值递减(从大到小)来排列
@@ -117,10 +128,10 @@ func (db *MinDB) ZRevRange(key []byte, start, stop int) []interface{} {
 		return nil
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRevRange(string(key), start, stop)
+	return db.zsetIndex.indexes.ZRevRange(string(key), start, stop)
 }
 
 // ZRem 移除有序集 key 中的 member 成员，不存在则将被忽略
@@ -130,10 +141,10 @@ func (db *MinDB) ZRem(key, member []byte) (ok bool, err error) {
 		return
 	}
 
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.zsetIndex.mu.Lock()
+	defer db.zsetIndex.mu.Unlock()
 
-	if ok = db.zsetIndex.ZRem(string(key), string(member)); ok {
+	if ok = db.zsetIndex.indexes.ZRem(string(key), string(member)); ok {
 		e := storage.NewEntryNoExtra(key, member, ZSet, ZSetZRem)
 		if err = db.store(e); err != nil {
 			return
@@ -146,19 +157,19 @@ func (db *MinDB) ZRem(key, member []byte) (ok bool, err error) {
 // ZGetByRank 根据排名获取member及分值信息，从小到大排列遍历，即分值最低排名为0，依次类推
 func (db *MinDB) ZGetByRank(key []byte, rank int) []interface{} {
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZGetByRank(string(key), rank)
+	return db.zsetIndex.indexes.ZGetByRank(string(key), rank)
 }
 
 // ZRevGetByRank 根据排名获取member及分值信息，从大到小排列遍历，即分值最高排名为0，依次类推
 func (db *MinDB) ZRevGetByRank(key []byte, rank int) []interface{} {
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRevGetByRank(string(key), rank)
+	return db.zsetIndex.indexes.ZRevGetByRank(string(key), rank)
 }
 
 // ZScoreRange 返回有序集 key 中，所有 score 值介于 min 和 max 之间(包括等于 min 或 max )的成员
@@ -169,10 +180,10 @@ func (db *MinDB) ZScoreRange(key []byte, min, max float64) []interface{} {
 		return nil
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZScoreRange(string(key), min, max)
+	return db.zsetIndex.indexes.ZScoreRange(string(key), min, max)
 }
 
 // ZRevScoreRange 返回有序集 key 中， score 值介于 max 和 min 之间(包括等于 max 或 min )的所有的成员
@@ -182,8 +193,8 @@ func (db *MinDB) ZRevScoreRange(key []byte, max, min float64) []interface{} {
 		return nil
 	}
 
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.zsetIndex.mu.RLock()
+	defer db.zsetIndex.mu.RUnlock()
 
-	return db.zsetIndex.ZRevScoreRange(string(key), max, min)
+	return db.zsetIndex.indexes.ZRevScoreRange(string(key), max, min)
 }
