@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // 数据类型定义
@@ -61,6 +62,11 @@ const (
 //建立字符串索引
 func (db *MinDB) buildStringIndex(idx *index.Indexer, opt uint16) {
 	if db.listIndex == nil || idx == nil {
+		return
+	}
+
+	now := uint32(time.Now().Unix())
+	if deadline, exist := db.expires[string(idx.Meta.Key)]; exist && deadline <= now {
 		return
 	}
 

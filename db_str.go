@@ -2,9 +2,11 @@ package mindb
 
 import (
 	"bytes"
+	"log"
 	"mindb/index"
 	"mindb/storage"
 	"strings"
+	"time"
 )
 
 //---------字符串相关操作接口-----------
@@ -13,32 +15,37 @@ import (
 // 如果 key 已经持有其他值，SET 就覆写旧值
 func (db *MinDB) Set(key, value []byte) error {
 
-	if err := db.checkKeyValue(key, value); err != nil {
+	//if err := db.checkKeyValue(key, value); err != nil {
+	//	return err
+	//}
+	//
+	//db.mu.Lock()
+	//defer db.mu.Unlock()
+	//
+	//e := storage.NewEntryNoExtra(key, value, String, StringSet) // 先写文件
+	//if err := db.store(e); err != nil {
+	//	return err
+	//}
+	//
+	////数据索引
+	//idx := &index.Indexer{
+	//	Meta: &storage.Meta{
+	//		KeySize: uint32(len(e.Meta.Key)),
+	//		Key:     e.Meta.Key,
+	//	},
+	//	FileId:    db.activeFileId,
+	//	EntrySize: e.Size(),
+	//	Offset:    db.activeFile.Offset - int64(e.Size()),
+	//}
+	//
+	//if err := db.buildIndex(e, idx); err != nil { // 后写内存索引
+	//	return err
+	//}
+	if err := db.doSet(key, value); err != nil {
 		return err
 	}
-
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	e := storage.NewEntryNoExtra(key, value, String, StringSet) // 先写文件
-	if err := db.store(e); err != nil {
-		return err
-	}
-
-	//数据索引
-	idx := &index.Indexer{
-		Meta: &storage.Meta{
-			KeySize: uint32(len(e.Meta.Key)),
-			Key:     e.Meta.Key,
-		},
-		FileId:    db.activeFileId,
-		EntrySize: e.Size(),
-		Offset:    db.activeFile.Offset - int64(e.Size()),
-	}
-
-	if err := db.buildIndex(e, idx); err != nil { // 后写内存索引
-		return err
-	}
+	//清除过期时间
+	db.Persist(key)
 
 	return nil
 }
@@ -74,6 +81,11 @@ func (db *MinDB) Get(key []byte) ([]byte, error) {
 
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+
+	//判断是否过期
+	if db.expireIfNeeded(key) {
+		return nil, ErrKeyExpired
+	}
 
 	//如果key和value均在内存中，则取内存中的value
 	if db.config.IdxMode == KeyValueRamMode {
@@ -120,17 +132,31 @@ func (db *MinDB) Append(key, value []byte) error {
 	}
 
 	e, err := db.Get(key)
-	if err != nil {
+	if err != nil && err != ErrKeyNotExist {
 		return err
 	}
 
+	if db.expireIfNeeded(key) {
+		return ErrKeyExpired
+	}
+	appendExist := false
+
 	if e != nil {
+		appendExist = true
 		e = append(e, value...)
 	} else {
 		e = value
 	}
 
-	return db.Set(key, e)
+	if err := db.doSet(key, e); err != nil {
+		return err
+	}
+
+	if !appendExist {
+		db.Persist(key)
+	}
+
+	return nil
 }
 
 // 返回key存储的字符串值的长度
@@ -145,6 +171,9 @@ func (db *MinDB) StrLen(key []byte) int {
 
 	e := db.idxList.Get(key)
 	if e != nil {
+		if db.expireIfNeeded(key) {
+			return 0
+		}
 		idx := e.Value().(*index.Indexer)
 		return int(idx.Meta.ValueSize)
 	}
@@ -162,7 +191,11 @@ func (db *MinDB) StrExists(key []byte) bool {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	return db.idxList.Exist(key)
+	exist := db.idxList.Exist(key)
+	if exist && !db.expireIfNeeded(key) {
+		return true
+	}
+	return false
 }
 
 //删除key及其数据
@@ -175,6 +208,7 @@ func (db *MinDB) StrRem(key []byte) error {
 	defer db.mu.Unlock()
 
 	if ele := db.idxList.Remove(key); ele != nil {
+		delete(db.expires, string(key))
 		e := storage.NewEntryNoExtra(key, nil, String, StringRem)
 		if err := db.store(e); err != nil {
 			return err
@@ -201,6 +235,9 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 		return
 	}
 
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	e := db.idxList.FindPrefix([]byte(prefix))
 	if limit > 0 {
 		for i := 0; i < offset && e != nil && strings.HasPrefix(string(e.Key()), prefix); i++ {
@@ -223,10 +260,12 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 			}
 		}
 
-		val = append(val, value)
-		e = e.Next()
-
-		if limit > 0 {
+		expired := db.expireIfNeeded(e.Key())
+		if !expired {
+			val = append(val, value)
+			e = e.Next()
+		}
+		if limit > 0 && !expired {
 			limit--
 		}
 	}
@@ -241,7 +280,14 @@ func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 		return nil, ErrKeyNotExist
 	}
 
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	for bytes.Compare(node.Key(), end) <= 0 {
+		if db.expireIfNeeded(node.Key()) {
+			node = node.Next()
+			continue
+		}
 		var value []byte
 		if db.config.IdxMode == KeyOnlyRamMode {
 			value, err = db.Get(node.Key())
@@ -256,5 +302,103 @@ func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 		node = node.Next()
 	}
 
+	return
+}
+
+//设置key的过期时间
+func (db *MinDB) Expire(key []byte, seconds uint32) (err error) {
+	if exist := db.StrExists(key); !exist {
+		return ErrKeyNotExist
+	}
+	if seconds <= 0 {
+		return ErrInvalidTtl
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	deadline := uint32(time.Now().Unix()) + seconds
+	db.expires[string(key)] = deadline
+	return
+}
+
+//清除key的过期时间
+func (db *MinDB) Persist(key []byte) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	delete(db.expires, string(key))
+}
+
+//获取key的过期时间
+func (db *MinDB) TTL(key []byte) (ttl uint32) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.expireIfNeeded(key) {
+		return
+	}
+	deadline, exist := db.expires[string(key)]
+	if !exist {
+		return
+	}
+
+	now := uint32(time.Now().Unix())
+	if deadline > now {
+		ttl = deadline - now
+	}
+	return
+}
+
+//检查key是否过期并删除相应的值
+func (db *MinDB) expireIfNeeded(key []byte) (expired bool) {
+	deadline := db.expires[string(key)]
+	if deadline <= 0 {
+		return
+	}
+
+	if time.Now().Unix() > int64(deadline) {
+		expired = true
+		//删除过期字典对应的key
+		delete(db.expires, string(key))
+
+		//删除索引及数据
+		if ele := db.idxList.Remove(key); ele != nil {
+			e := storage.NewEntryNoExtra(key, nil, String, StringRem)
+			if err := db.store(e); err != nil {
+				log.Printf("remove expired key err [%+v] [%+v]\n", key, err)
+			}
+		}
+	}
+	return
+}
+
+func (db *MinDB) doSet(key, value []byte) (err error) {
+	if err = db.checkKeyValue(key, value); err != nil {
+		return err
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	e := storage.NewEntryNoExtra(key, value, String, StringSet)
+	if err := db.store(e); err != nil {
+		return err
+	}
+
+	//数据索引
+	idx := &index.Indexer{
+		Meta: &storage.Meta{
+			KeySize: uint32(len(e.Meta.Key)),
+			Key:     e.Meta.Key,
+		},
+		FileId:    db.activeFileId,
+		EntrySize: e.Size(),
+		Offset:    db.activeFile.Offset - int64(e.Size()),
+	}
+
+	if err = db.buildIndex(e, idx); err != nil {
+		return err
+	}
 	return
 }

@@ -15,6 +15,7 @@ import (
 	"mindb/utils"
 	"os"
 	"sync"
+	"time"
 )
 
 var (
@@ -33,6 +34,10 @@ var (
 	ErrReclaimUnreached = errors.New("mindb: unused space not reach the threshold")
 
 	ErrExtraContainsSeparator = errors.New("rosedb: extra contains separator \\0")
+
+	ErrInvalidTtl = errors.New("mindb: invalid ttl")
+
+	ErrKeyExpired = errors.New("mindb: key is expired")
 )
 
 const (
@@ -50,21 +55,25 @@ const (
 
 	//额外信息的分隔符，用于存储一些额外的信息（因此一些操作的value中不能包含此分隔符）
 	ExtraSeparator = "\\0"
+
+	//保存过期字典的文件名称
+	expireFile = string(os.PathSeparator) + "db.expires"
 )
 
 type (
 	MinDB struct {
-		activeFile   *storage.DBFile
-		archFiles    ArchivedFiles
-		idxList      *index.SkipList
-		listIndex    *list.List
-		hashIndex    *hash.Hash
-		setIndex     *set.Set
-		zsetIndex    *zset.SortedSet
-		config       Config
-		activeFileId uint32
-		mu           sync.RWMutex
-		meta         *storage.DBMeta
+		activeFile   *storage.DBFile //当前活跃文件
+		activeFileId uint32          //活跃文件id
+		archFiles    ArchivedFiles   //已封存文件
+		idxList      *index.SkipList //字符串索引列表
+		listIndex    *list.List      //list索引列表
+		hashIndex    *hash.Hash      //hash索引列表
+		setIndex     *set.Set        //集合索引列表
+		zsetIndex    *zset.SortedSet //有序集合索引列表
+		config       Config          //数据库配置
+		mu           sync.RWMutex    //mutex
+		meta         *storage.DBMeta //数据库配置额外信息
+		expires      storage.Expires //过期字典
 	}
 
 	//已封存的文件map索引
@@ -100,6 +109,9 @@ func Open(config Config) (*MinDB, error) {
 		return nil, err
 	}
 
+	//加载过期字典
+	expires := storage.LoadExpires(config.DirPath + expireFile)
+
 	//加载数据库额外信息（meta）
 	meta, _ := storage.LoadMeta(config.DirPath + dbMetaSaveFile)
 
@@ -116,6 +128,7 @@ func Open(config Config) (*MinDB, error) {
 		hashIndex:    hash.New(),
 		setIndex:     set.New(),
 		zsetIndex:    zset.New(),
+		expires:      expires,
 	}
 
 	//加载索引信息
@@ -154,6 +167,10 @@ func (db *MinDB) Close() error {
 	}
 
 	if err := db.saveMeta(); err != nil {
+		return err
+	}
+
+	if err := db.expires.SaveExpires(db.config.DirPath + expireFile); err != nil { // 保存过期信息
 		return err
 	}
 
@@ -336,7 +353,7 @@ func (db *MinDB) Backup(dir string) (err error) {
 		err = utils.CopyDir(db.config.DirPath, dir)
 	}
 
-	return err
+	return
 }
 
 // 检查key value是否符合规范
@@ -468,6 +485,10 @@ func (db *MinDB) validEntry(e *storage.Entry) bool {
 	switch e.Type {
 	case String:
 		if mark == StringSet { // 和当前索引的内容进行比较
+			now := uint32(time.Now().Unix())
+			if deadline, exist := db.expires[string(e.Meta.Key)]; exist && deadline <= now {
+				return false
+			}
 			if val, err := db.Get(e.Meta.Key); err == nil && string(val) == string(e.Meta.Value) {
 				return true
 			}
