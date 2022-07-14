@@ -6,12 +6,12 @@ import (
 	"os"
 )
 
-//保存数据库的一些额外信息
+// DBMeta 保存数据库的一些额外信息
 type DBMeta struct {
 	ActiveWriteOff int64 `json:"active_write_off"` //当前数据文件的写偏移
 }
 
-// 加载数据库信息
+// LoadMeta 加载数据库信息
 func LoadMeta(path string) (m *DBMeta, err error) {
 	m = &DBMeta{}
 
@@ -34,7 +34,7 @@ func LoadMeta(path string) (m *DBMeta, err error) {
 	return
 }
 
-// 将数据库信息存储
+// Store 将数据库信息存储
 func (m *DBMeta) Store(path string) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {

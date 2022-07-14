@@ -4,7 +4,7 @@ import "mindb/storage"
 
 //集合的相关操作接口
 
-//添加元素，返回添加后的集合中的元素个数
+// SAdd 添加元素，返回添加后的集合中的元素个数
 func (db *MinDB) SAdd(key []byte, members ...[]byte) (res int, err error) {
 
 	if err = db.checkKeyValue(key, members...); err != nil {
@@ -26,7 +26,7 @@ func (db *MinDB) SAdd(key []byte, members ...[]byte) (res int, err error) {
 	return
 }
 
-//随机移除并返回集合中的count个元素
+// SPop 随机移除并返回集合中的count个元素
 func (db *MinDB) SPop(key []byte, count int) (values [][]byte, err error) {
 
 	if err = db.checkKeyValue(key, nil); err != nil {
@@ -47,7 +47,7 @@ func (db *MinDB) SPop(key []byte, count int) (values [][]byte, err error) {
 	return
 }
 
-//判断 member 元素是不是集合 key 的成员
+// SIsMember 判断 member 元素是不是集合 key 的成员
 func (db *MinDB) SIsMember(key, member []byte) bool {
 
 	db.mu.RLock()
@@ -56,7 +56,7 @@ func (db *MinDB) SIsMember(key, member []byte) bool {
 	return db.setIndex.SIsMember(string(key), member)
 }
 
-//从集合中返回随机元素，count的可选值如下：
+// SRandMember 从集合中返回随机元素，count的可选值如下：
 //如果 count 为正数，且小于集合元素数量，则返回一个包含 count 个元素的数组，数组中的元素各不相同
 //如果 count 大于等于集合元素数量，那么返回整个集合
 //如果 count 为负数，则返回一个数组，数组中的元素可能会重复出现多次，而数组的长度为 count 的绝对值
@@ -68,7 +68,7 @@ func (db *MinDB) SRandMember(key []byte, count int) [][]byte {
 	return db.setIndex.SRandMember(string(key), count)
 }
 
-//移除集合 key 中的一个或多个 member 元素，不存在的 member 元素会被忽略
+// SRem 移除集合 key 中的一个或多个 member 元素，不存在的 member 元素会被忽略
 //被成功移除的元素的数量，不包括被忽略的元素
 func (db *MinDB) SRem(key []byte, members ...[]byte) (res int, err error) {
 
@@ -92,7 +92,7 @@ func (db *MinDB) SRem(key []byte, members ...[]byte) (res int, err error) {
 	return
 }
 
-//将 member 元素从 src 集合移动到 dst 集合
+// SMove 将 member 元素从 src 集合移动到 dst 集合
 func (db *MinDB) SMove(src, dst, member []byte) error {
 
 	db.mu.Lock()
@@ -108,7 +108,7 @@ func (db *MinDB) SMove(src, dst, member []byte) error {
 	return nil
 }
 
-//返回集合中的元素个数
+// SCard 返回集合中的元素个数
 func (db *MinDB) SCard(key []byte) int {
 
 	if err := db.checkKeyValue(key, nil); err != nil {
@@ -121,7 +121,7 @@ func (db *MinDB) SCard(key []byte) int {
 	return db.setIndex.SCard(string(key))
 }
 
-//返回集合中的所有元素
+// SMembers 返回集合中的所有元素
 func (db *MinDB) SMembers(key []byte) (val [][]byte) {
 
 	if err := db.checkKeyValue(key, nil); err != nil {
@@ -134,7 +134,7 @@ func (db *MinDB) SMembers(key []byte) (val [][]byte) {
 	return db.setIndex.SMembers(string(key))
 }
 
-//返回给定全部集合数据的并集
+// SUnion 返回给定全部集合数据的并集
 func (db *MinDB) SUnion(keys ...[]byte) (val [][]byte) {
 
 	if keys == nil || len(keys) == 0 {
@@ -152,7 +152,7 @@ func (db *MinDB) SUnion(keys ...[]byte) (val [][]byte) {
 	return db.setIndex.SUnion(s...)
 }
 
-//返回给定集合数据的差集
+//  SDiff 返回给定集合数据的差集
 func (db *MinDB) SDiff(keys ...[]byte) (val [][]byte) {
 
 	if keys == nil || len(keys) == 0 {

@@ -76,11 +76,11 @@ type (
 		expires      storage.Expires //过期字典
 	}
 
-	//已封存的文件map索引
+	// ArchivedFiles 已封存的文件map索引
 	ArchivedFiles map[uint32]*storage.DBFile
 )
 
-//打开一个数据库实例
+// Open 打开一个数据库实例
 func Open(config Config) (*MinDB, error) {
 
 	//如果目录不存在则创建
@@ -89,15 +89,6 @@ func Open(config Config) (*MinDB, error) {
 			return nil, err
 		}
 	}
-
-	////如果存在索引文件，则加载索引状态
-	//skipList := index.NewSkipList()
-	//if utils.Exist(config.DirPath + indexSaveFile) {
-	//	err := index.Build(skipList, config.DirPath+indexSaveFile) // 加载索引文件的信息到索引中
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//}
 
 	//加载数据文件
 	archFiles, activeFileId, err := storage.Build(config.DirPath, config.RwMethod, config.BlockSize)
@@ -139,7 +130,7 @@ func Open(config Config) (*MinDB, error) {
 	return db, nil
 }
 
-//根据配置重新打开数据库
+// Reopen 根据配置重新打开数据库
 func Reopen(path string) (*MinDB, error) {
 	if exist := utils.Exist(path + configSaveFile); !exist {
 		return nil, ErrCfgNotExist
@@ -157,7 +148,7 @@ func Reopen(path string) (*MinDB, error) {
 	return Open(config)
 }
 
-//关闭数据库，保存相关配置
+// Close 关闭数据库，保存相关配置
 func (db *MinDB) Close() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -181,7 +172,7 @@ func (db *MinDB) Close() error {
 	return nil
 }
 
-//数据持久化
+// Sync 数据持久化
 func (db *MinDB) Sync() error {
 	if db == nil || db.activeFile == nil {
 		return nil
@@ -192,17 +183,12 @@ func (db *MinDB) Sync() error {
 	return db.activeFile.Sync()
 }
 
-//重新组织磁盘中的数据，回收磁盘空间
-// TODO
+// Reclaim 重新组织磁盘中的数据，回收磁盘空间
 func (db *MinDB) Reclaim() (err error) {
 
 	if len(db.archFiles) < db.config.ReclaimThreshold {
 		return ErrReclaimUnreached
 	}
-
-	//if db.idxList.Len <= 0 {
-	//	return nil
-	//}
 
 	//新建临时目录，用于暂存新的数据文件
 	reclaimPath := db.config.DirPath + reclaimPath
@@ -219,69 +205,6 @@ func (db *MinDB) Reclaim() (err error) {
 		df           *storage.DBFile
 	)
 
-	////遍历所有的key，将数据写入到临时文件中
-	//db.idxList.Foreach(func(e *index.Element) bool {
-	//	idx := e.Value().(*index.Indexer) // 得到索引信息
-	//
-	//	if idx != nil && db.archFiles[idx.FileId] != nil { // 如果该文件存在
-	//		if df == nil { // 如果是第一次遍历，df尚未初始化
-	//			df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
-	//			newArchFiles[activeFileId] = df // 将新建的数据文件放入暂时的封存文件映射中
-	//		}
-	//
-	//		if int64(idx.EntrySize)+df.Offset > db.config.BlockSize { // 如果当前数据文件放不下当前遍历到的索引
-	//			df.Close(true)    // 关闭当前数据文件
-	//			activeFileId += 1 // 文件id 加一
-	//
-	//			df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
-	//			newArchFiles[activeFileId] = df // 新建一个数据文件
-	//		}
-	//
-	//		entry, err := db.archFiles[idx.FileId].Read(idx.Offset) // 读取当前索引对应的entry
-	//		if err != nil {
-	//			success = false
-	//			return false
-	//		}
-	//
-	//		//更新索引
-	//		idx.FileId = df.Id
-	//		idx.Offset = df.Offset
-	//		e.SetValue(idx)
-	//
-	//		if err := df.Write(entry); err != nil { // 将entry写入到新的数据文件中
-	//			success = false
-	//			return false
-	//		}
-	//	}
-	//
-	//	return true
-	//})
-	//
-	//db.mu.Lock()
-	//defer db.mu.Unlock()
-	//
-	//////重新保存索引
-	////if err := db.saveIndexes(); err != nil {
-	////	return err
-	////}
-	//
-	//if success {
-	//
-	//	//旧数据删除，临时目录拷贝为新的数据文件
-	//	for _, v := range db.archFiles {
-	//		os.Remove(v.File.Name())
-	//	}
-	//
-	//	for _, v := range newArchFiles {
-	//		name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatName, v.Id)
-	//		os.Rename(reclaimPath+name, db.config.DirPath+name)
-	//	}
-	//
-	//	//更新数据库相关信息
-	//	db.archFiles = newArchFiles
-	//}
-	//
-	//return nil
 	for _, file := range db.archFiles {
 		var offset int64 = 0
 		var reclaimEntries []*storage.Entry
@@ -347,7 +270,7 @@ func (db *MinDB) Reclaim() (err error) {
 	return
 }
 
-//复制数据库目录，用于备份
+// Backup 复制数据库目录，用于备份
 func (db *MinDB) Backup(dir string) (err error) {
 	if utils.Exist(db.config.DirPath) {
 		err = utils.CopyDir(db.config.DirPath, dir)
