@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"mindb/ds/hash"
 	"mindb/ds/list"
@@ -174,41 +175,17 @@ func (db *MinDB) Sync() error {
 	return db.activeFile.Sync()
 }
 
-//删除数据
-func (db *MinDB) Remove(key []byte) error {
-
-	if err := db.checkKeyValue(key, nil); err != nil {
-		return err
-	}
-
-	////增加可回收的磁盘空间
-	//e := db.idxList.Get(key) // 获取到索引信息
-	//if e != nil {
-	//	idx := e.Value().(*index.Indexer)
-	//	if idx != nil {
-	//		db.meta.UnusedSpace += uint64(idx.EntrySize) //更新可回收的磁盘空间
-	//	}
-	//}
-
-	//删除其在内存中的索引
-	e := db.idxList.Get(key)
-	if e != nil {
-		db.idxList.Remove(key)
-	}
-	return nil
-}
-
 //重新组织磁盘中的数据，回收磁盘空间
 // TODO
-func (db *MinDB) Reclaim() error {
+func (db *MinDB) Reclaim() (err error) {
 
 	if len(db.archFiles) < db.config.ReclaimThreshold {
 		return ErrReclaimUnreached
 	}
 
-	if db.idxList.Len <= 0 {
-		return nil
-	}
+	//if db.idxList.Len <= 0 {
+	//	return nil
+	//}
 
 	//新建临时目录，用于暂存新的数据文件
 	reclaimPath := db.config.DirPath + reclaimPath
@@ -219,75 +196,138 @@ func (db *MinDB) Reclaim() error {
 	defer os.RemoveAll(reclaimPath)
 
 	var (
-		success             = true
+		//success             = true
 		activeFileId uint32 = 0
 		newArchFiles        = make(ArchivedFiles)
 		df           *storage.DBFile
 	)
 
-	//遍历所有的key，将数据写入到临时文件中
-	db.idxList.Foreach(func(e *index.Element) bool {
-		idx := e.Value().(*index.Indexer) // 得到索引信息
-
-		if idx != nil && db.archFiles[idx.FileId] != nil { // 如果该文件存在
-			if df == nil { // 如果是第一次遍历，df尚未初始化
-				df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
-				newArchFiles[activeFileId] = df // 将新建的数据文件放入暂时的封存文件映射中
-			}
-
-			if int64(idx.EntrySize)+df.Offset > db.config.BlockSize { // 如果当前数据文件放不下当前遍历到的索引
-				df.Close(true)    // 关闭当前数据文件
-				activeFileId += 1 // 文件id 加一
-
-				df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
-				newArchFiles[activeFileId] = df // 新建一个数据文件
-			}
-
-			entry, err := db.archFiles[idx.FileId].Read(idx.Offset) // 读取当前索引对应的entry
-			if err != nil {
-				success = false
-				return false
-			}
-
-			//更新索引
-			idx.FileId = df.Id
-			idx.Offset = df.Offset
-			e.SetValue(idx)
-
-			if err := df.Write(entry); err != nil { // 将entry写入到新的数据文件中
-				success = false
-				return false
-			}
-		}
-
-		return true
-	})
-
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	////重新保存索引
-	//if err := db.saveIndexes(); err != nil {
-	//	return err
+	////遍历所有的key，将数据写入到临时文件中
+	//db.idxList.Foreach(func(e *index.Element) bool {
+	//	idx := e.Value().(*index.Indexer) // 得到索引信息
+	//
+	//	if idx != nil && db.archFiles[idx.FileId] != nil { // 如果该文件存在
+	//		if df == nil { // 如果是第一次遍历，df尚未初始化
+	//			df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
+	//			newArchFiles[activeFileId] = df // 将新建的数据文件放入暂时的封存文件映射中
+	//		}
+	//
+	//		if int64(idx.EntrySize)+df.Offset > db.config.BlockSize { // 如果当前数据文件放不下当前遍历到的索引
+	//			df.Close(true)    // 关闭当前数据文件
+	//			activeFileId += 1 // 文件id 加一
+	//
+	//			df, _ = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
+	//			newArchFiles[activeFileId] = df // 新建一个数据文件
+	//		}
+	//
+	//		entry, err := db.archFiles[idx.FileId].Read(idx.Offset) // 读取当前索引对应的entry
+	//		if err != nil {
+	//			success = false
+	//			return false
+	//		}
+	//
+	//		//更新索引
+	//		idx.FileId = df.Id
+	//		idx.Offset = df.Offset
+	//		e.SetValue(idx)
+	//
+	//		if err := df.Write(entry); err != nil { // 将entry写入到新的数据文件中
+	//			success = false
+	//			return false
+	//		}
+	//	}
+	//
+	//	return true
+	//})
+	//
+	//db.mu.Lock()
+	//defer db.mu.Unlock()
+	//
+	//////重新保存索引
+	////if err := db.saveIndexes(); err != nil {
+	////	return err
+	////}
+	//
+	//if success {
+	//
+	//	//旧数据删除，临时目录拷贝为新的数据文件
+	//	for _, v := range db.archFiles {
+	//		os.Remove(v.File.Name())
+	//	}
+	//
+	//	for _, v := range newArchFiles {
+	//		name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatName, v.Id)
+	//		os.Rename(reclaimPath+name, db.config.DirPath+name)
+	//	}
+	//
+	//	//更新数据库相关信息
+	//	db.archFiles = newArchFiles
 	//}
+	//
+	//return nil
+	for _, file := range db.archFiles {
+		var offset int64 = 0
+		var reclaimEntries []*storage.Entry
 
-	if success {
+		for {
+			if e, err := file.Read(offset); err == nil {
+				//判断是否为有效的entry
+				if db.validEntry(e) {
+					reclaimEntries = append(reclaimEntries, e)
+				}
 
-		//旧数据删除，临时目录拷贝为新的数据文件
-		for _, v := range db.archFiles {
-			os.Remove(v.File.Name())
+				offset += int64(e.Size())
+			} else {
+				if err == io.EOF {
+					break
+				}
+
+				return err
+			}
 		}
 
-		for _, v := range newArchFiles {
-			name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatName, v.Id)
-			os.Rename(reclaimPath+name, db.config.DirPath+name)
-		}
+		//重新将entry写入到文件中
+		if len(reclaimEntries) > 0 {
+			for _, entry := range reclaimEntries {
+				if df == nil || int64(entry.Size())+df.Offset > db.config.BlockSize {
+					df, err = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
+					if err != nil {
+						return
+					}
 
-		//更新数据库相关信息
-		db.archFiles = newArchFiles
+					newArchFiles[activeFileId] = df
+					activeFileId++
+				}
+
+				if err = df.Write(entry); err != nil {
+					return
+				}
+
+				//更新字符串索引
+				if entry.Type == String {
+					item := db.idxList.Get(entry.Meta.Key)
+					idx := item.Value().(*index.Indexer)
+					idx.Offset = df.Offset - int64(entry.Size())
+					idx.FileId = activeFileId
+					db.idxList.Put(idx.Meta.Key, idx)
+				}
+			}
+		}
 	}
 
-	return nil
+	//旧数据删除，临时目录拷贝为新的数据文件
+	for _, v := range db.archFiles {
+		_ = os.Remove(v.File.Name())
+	}
+
+	for _, v := range newArchFiles {
+		name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatName, v.Id)
+		os.Rename(reclaimPath+name, db.config.DirPath+name)
+	}
+
+	db.archFiles = newArchFiles
+
+	return
 }
 
 //复制数据库目录，用于备份
@@ -354,7 +394,7 @@ func (db *MinDB) buildIndex(e *storage.Entry, idx *index.Indexer) error {
 	}
 	switch e.Type {
 	case storage.String: // 如果是string，就把当前索引加入到跳表中
-		db.idxList.Put(idx.Meta.Key, idx)
+		db.buildStringIndex(idx, e.Mark)
 	case storage.List: // 如果是list，就建立list索引
 		db.buildListIndex(idx, e.Mark)
 	case storage.Hash:
@@ -415,4 +455,57 @@ func (db *MinDB) store(e *storage.Entry) error {
 	}
 
 	return nil
+}
+
+// 判断entry所属的操作标识(增、改类型的操作)，以及val是否是有效的
+func (db *MinDB) validEntry(e *storage.Entry) bool {
+
+	if e == nil {
+		return false
+	}
+
+	mark := e.Mark
+	switch e.Type {
+	case String:
+		if mark == StringSet { // 和当前索引的内容进行比较
+			if val, err := db.Get(e.Meta.Key); err == nil && string(val) == string(e.Meta.Value) {
+				return true
+			}
+		}
+	case List:
+		if mark == ListLPush || mark == ListRPush || mark == ListLInsert || mark == ListLSet {
+			// TODO 由于List是链表结构，无法有效的进行检索，取出全部数据依次比较的开销太大
+			//因此暂时不参与reclaim，后续再想想其他的解决方案
+			return true
+		}
+	case Hash:
+		if mark == HashHSet {
+			if val := db.HGet(e.Meta.Key, e.Meta.Extra); string(val) == string(e.Meta.Value) {
+				return true
+			}
+		}
+	case Set:
+		if mark == SetSMove {
+			if db.SIsMember(e.Meta.Extra, e.Meta.Value) {
+				return true
+			}
+		}
+
+		if mark == SetSAdd {
+			if db.SIsMember(e.Meta.Key, e.Meta.Value) {
+				return true
+			}
+		}
+	case ZSet:
+		if mark == ZSetZAdd {
+			if val, err := utils.StrToFloat64(string(e.Meta.Extra)); err == nil {
+				score := db.ZScore(e.Meta.Key, e.Meta.Value)
+				if score == val {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
