@@ -31,7 +31,7 @@ var (
 
 	ErrExtraContainsSeparator = errors.New("rosedb: extra contains separator \\0")
 
-	ErrInvalidTtl = errors.New("mindb: invalid ttl")
+	ErrInvalidTTL = errors.New("mindb: invalid ttl")
 
 	ErrKeyExpired = errors.New("mindb: key is expired")
 )
@@ -49,7 +49,7 @@ const (
 	//回收磁盘空间时的临时目录
 	reclaimPath = string(os.PathSeparator) + "mindb_reclaim"
 
-	//额外信息的分隔符，用于存储一些额外的信息（因此一些操作的value中不能包含此分隔符）
+	// ExtraSeparator 额外信息的分隔符，用于存储一些额外的信息（因此一些操作的value中不能包含此分隔符）
 	ExtraSeparator = "\\0"
 
 	//保存过期字典的文件名称
@@ -134,12 +134,12 @@ func Reopen(path string) (*MinDB, error) {
 
 	var config Config
 
-	if bytes, err := ioutil.ReadFile(path + configSaveFile); err != nil {
+	bytes, err := ioutil.ReadFile(path + configSaveFile)
+	if err != nil {
 		return nil, err
-	} else {
-		if err := json.Unmarshal(bytes, &config); err != nil { // 解码json格式的配置文件
-			return nil, err
-		}
+	}
+	if err := json.Unmarshal(bytes, &config); err != nil {
+		return nil, err
 	}
 	return Open(config)
 }
@@ -309,12 +309,6 @@ func (db *MinDB) saveConfig() (err error) {
 	return
 }
 
-//// 持久化索引状态
-//func (db *MinDB) saveIndexes() error {
-//	idxPath := db.config.DirPath + indexSaveFile
-//	return index.Store(db.idxList, idxPath)
-//}
-
 // 持久化数据库信息
 func (db *MinDB) saveMeta() error {
 	metaPath := db.config.DirPath + dbMetaSaveFile
@@ -344,7 +338,7 @@ func (db *MinDB) buildIndex(e *storage.Entry, idx *index.Indexer) error {
 	return nil
 }
 
-//写数据
+// 写数据
 func (db *MinDB) store(e *storage.Entry) error {
 
 	//如果数据文件空间不够，则关闭该文件，并新打开一个文件
@@ -376,14 +370,14 @@ func (db *MinDB) store(e *storage.Entry) error {
 	//	}
 	//}
 
-	//写入数据至文件中
+	// 写入数据至文件中
 	if err := db.activeFile.Write(e); err != nil {
 		return err
 	}
 
 	db.meta.ActiveWriteOff = db.activeFile.Offset
 
-	//数据持久化
+	// 数据持久化
 	if config.Sync {
 		if err := db.activeFile.Sync(); err != nil {
 			return err

@@ -28,6 +28,7 @@ const (
 )
 
 type (
+	// Entry 数据entry定义
 	Entry struct {
 		Meta  *Meta
 		Type  uint16 //数据类型
@@ -35,6 +36,7 @@ type (
 		crc32 uint32 //校验和
 	}
 
+	// Meta meta 数据
 	Meta struct {
 		Key       []byte
 		Value     []byte
@@ -45,6 +47,7 @@ type (
 	}
 )
 
+// NewEntry new an entry
 func NewEntry(key, value, extra []byte, t, mark uint16) *Entry {
 	return &Entry{
 		Meta: &Meta{
@@ -60,6 +63,7 @@ func NewEntry(key, value, extra []byte, t, mark uint16) *Entry {
 	}
 }
 
+// NewEntryNoExtra new an entry without extra info
 func NewEntryNoExtra(key, value []byte, t, mark uint16) *Entry {
 	return NewEntry(key, value, nil, t, mark)
 }

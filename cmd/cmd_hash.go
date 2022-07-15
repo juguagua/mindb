@@ -9,7 +9,7 @@ func hSet(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 3 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -31,7 +31,7 @@ func hSetNx(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 3 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -61,7 +61,7 @@ func hGet(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 2 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -87,7 +87,7 @@ func hGetAll(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 1 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -115,7 +115,7 @@ func hDel(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) <= 1 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -145,7 +145,7 @@ func hExists(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 2 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -169,7 +169,7 @@ func hLen(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 1 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -187,7 +187,7 @@ func hKeys(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 1 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 
@@ -215,7 +215,7 @@ func hValues(db *mindb.MinDB, args []string) (res string, err error) {
 
 	if len(args) != 1 {
 
-		err = SyntaxErr
+		err = ErrSyntaxIncorrect
 
 		return
 

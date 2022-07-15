@@ -12,6 +12,7 @@ import (
 
 //---------字符串相关操作接口-----------
 
+// StrIdx string idx
 type StrIdx struct {
 	mu      sync.RWMutex
 	idxList *index.SkipList
@@ -72,7 +73,7 @@ func (db *MinDB) SetNx(key, value []byte) error {
 	return db.Set(key, value)
 }
 
-// Get方法根据 key 查找对应的 值元素
+// Get 根据 key 查找对应的 值元素
 func (db *MinDB) Get(key []byte) ([]byte, error) {
 	keySize := uint32(len(key))
 	if keySize == 0 {
@@ -109,11 +110,13 @@ func (db *MinDB) Get(key []byte) ([]byte, error) {
 			df = db.archFiles[idx.FileId]
 		}
 
-		if e, err := df.Read(idx.Offset); err != nil {
+		e, err := df.Read(idx.Offset)
+		if err != nil {
 			return nil, err
-		} else {
-			return e.Meta.Value, nil
 		}
+
+		return e.Meta.Value, nil
+
 	}
 
 	return nil, ErrKeyNotExist
@@ -321,7 +324,7 @@ func (db *MinDB) Expire(key []byte, seconds uint32) (err error) {
 		return ErrKeyNotExist
 	}
 	if seconds <= 0 {
-		return ErrInvalidTtl
+		return ErrInvalidTTL
 	}
 
 	db.strIndex.mu.Lock()

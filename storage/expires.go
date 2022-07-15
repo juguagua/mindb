@@ -11,16 +11,17 @@ import (
 
 const expireHeadSize = 12
 
-// key和其设定的过期时间的映射
+// Expires 过期字典定义
 type Expires map[string]uint32
 
+// ExpiresValue expires value
 type ExpiresValue struct {
 	Key      []byte
 	KeySize  uint32
 	Deadline uint64
 }
 
-// 持久化key的过期时间
+// SaveExpires 持久化过期字典信息
 func (e *Expires) SaveExpires(path string) (err error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600) // 打开一个path下的写权限文件
 	if err != nil {
@@ -50,7 +51,7 @@ func (e *Expires) SaveExpires(path string) (err error) {
 	return
 }
 
-// 从数据文件加载key的过期时间
+// LoadExpires 从数据文件加载过期字典信息
 func LoadExpires(path string) (expires Expires) {
 	expires = make(Expires)
 	file, err := os.OpenFile(path, os.O_RDONLY, 0600) // 只读权限打开path下的数据文件

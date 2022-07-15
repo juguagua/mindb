@@ -8,6 +8,7 @@ import (
 
 //hash相关操作接口
 
+// HashIdx hash idx
 type HashIdx struct {
 	mu      sync.RWMutex
 	indexes *hash.Hash

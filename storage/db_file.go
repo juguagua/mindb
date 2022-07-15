@@ -19,6 +19,7 @@ const (
 	// DBFileFormatName 默认数据文件名称格式化
 	DBFileFormatName = "%09d.data"
 
+	// PathSeparator the default path separator
 	PathSeparator = string(os.PathSeparator)
 )
 
@@ -39,6 +40,7 @@ const (
 	MMap
 )
 
+// DBFile db数据文件定义
 type DBFile struct {
 	Id     uint32
 	path   string
@@ -65,11 +67,11 @@ func NewDBFile(path string, fileId uint32, method FileRWMethod, blockSize int64)
 		if err = file.Truncate(blockSize); err != nil {
 			return nil, err
 		}
-		if m, err := mmap.Map(file, os.O_RDWR, 0); err != nil {
+		m, err := mmap.Map(file, os.O_RDWR, 0)
+		if err != nil {
 			return nil, err
-		} else {
-			df.mmap = m
 		}
+		df.mmap = m
 	}
 	return df, nil
 }
@@ -147,18 +149,18 @@ func (df *DBFile) Write(e *Entry) error {
 
 	method := df.method
 	writeOff := df.Offset
-	if encVal, err := e.Encode(); err != nil {
+	encVal, err := e.Encode()
+	if err != nil {
 		return err
-	} else {
-		if method == FileIO {
-			if _, err := df.File.WriteAt(encVal, writeOff); err != nil {
-				return err
-			}
-		}
+	}
 
-		if method == MMap {
-			copy(df.mmap[writeOff:], encVal)
+	if method == FileIO {
+		if _, err := df.File.WriteAt(encVal, writeOff); err != nil {
+			return err
 		}
+	}
+	if method == MMap {
+		copy(df.mmap[writeOff:], encVal)
 	}
 
 	df.Offset += int64(e.Size())
@@ -199,23 +201,23 @@ func Build(path string, method FileRWMethod, blockSize int64) (map[uint32]*DBFil
 		return nil, 0, err
 	}
 
-	var fileIds []int
+	var fileIDs []int
 	for _, d := range dir {
 		if strings.HasSuffix(d.Name(), "data") { // 如果是data为后缀即是数据文件
 			splitNames := strings.Split(d.Name(), ".")
 			id, _ := strconv.Atoi(splitNames[0])
-			fileIds = append(fileIds, id) // 将数据文件的id加入到fileIds切片中
+			fileIDs = append(fileIDs, id) // 将数据文件的id加入到fileIds切片中
 		}
 	}
 
-	sort.Ints(fileIds) // 对收集到的文件id进行排序
+	sort.Ints(fileIDs) // 对收集到的文件id进行排序
 	var activeFileId uint32 = 0
 	archFiles := make(map[uint32]*DBFile)
-	if len(fileIds) > 0 {
-		activeFileId = uint32(fileIds[len(fileIds)-1]) // active file一定是id最大（最后被写入）的文件
+	if len(fileIDs) > 0 {
+		activeFileId = uint32(fileIDs[len(fileIDs)-1]) // active file一定是id最大（最后被写入）的文件
 
-		for i := 0; i < len(fileIds)-1; i++ {
-			id := fileIds[i]
+		for i := 0; i < len(fileIDs)-1; i++ {
+			id := fileIDs[i]
 
 			file, err := NewDBFile(path, uint32(id), method, blockSize) // 将文件封装起来
 			if err != nil {

@@ -14,6 +14,7 @@ import (
 // DataType 数据类型定义
 type DataType = uint16
 
+// 数据类型定义
 const (
 	String DataType = iota
 	List
@@ -28,7 +29,7 @@ const (
 	StringRem
 )
 
-//列表相关操作标识
+// 列表相关操作标识
 const (
 	ListLPush uint16 = iota
 	ListRPush
@@ -40,26 +41,26 @@ const (
 	ListLTrim
 )
 
-//哈希相关操作标识
+// 哈希相关操作标识
 const (
 	HashHSet uint16 = iota
 	HashHDel
 )
 
-//集合相关操作标识
+// 集合相关操作标识
 const (
 	SetSAdd uint16 = iota
 	SetSRem
 	SetSMove
 )
 
-//有序集合相关操作标识
+// 有序集合相关操作标识
 const (
 	ZSetZAdd uint16 = iota
 	ZSetZRem
 )
 
-//建立字符串索引
+// 建立字符串索引
 func (db *MinDB) buildStringIndex(idx *index.Indexer, opt uint16) {
 	if db.listIndex == nil || idx == nil {
 		return
@@ -123,7 +124,7 @@ func (db *MinDB) buildListIndex(idx *index.Indexer, opt uint16) {
 	}
 }
 
-//建立哈希索引
+// 建立哈希索引
 func (db *MinDB) buildHashIndex(idx *index.Indexer, opt uint16) {
 
 	if db.hashIndex == nil || idx == nil {
@@ -139,7 +140,7 @@ func (db *MinDB) buildHashIndex(idx *index.Indexer, opt uint16) {
 	}
 }
 
-//建立集合索引
+// 建立集合索引
 func (db *MinDB) buildSetIndex(idx *index.Indexer, opt uint16) {
 
 	if db.hashIndex == nil || idx == nil {
@@ -158,7 +159,7 @@ func (db *MinDB) buildSetIndex(idx *index.Indexer, opt uint16) {
 	}
 }
 
-//建立有序集合索引
+// 建立有序集合索引
 func (db *MinDB) buildZsetIndex(idx *index.Indexer, opt uint16) {
 
 	if db.hashIndex == nil || idx == nil {
