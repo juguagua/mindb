@@ -296,7 +296,7 @@ func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 	db.strIndex.mu.RLock()
 	defer db.strIndex.mu.RUnlock()
 
-	for bytes.Compare(node.Key(), end) <= 0 {
+	for node != nil && bytes.Compare(node.Key(), end) <= 0 {
 		if db.expireIfNeeded(node.Key()) {
 			node = node.Next()
 			continue
@@ -392,6 +392,13 @@ func (db *MinDB) doSet(key, value []byte) (err error) {
 		return err
 	}
 
+	// 如果新增的 value 和设置的 value 一样，则不做任何操作
+	if db.config.IdxMode == KeyValueRamMode {
+		if existVal, _ := db.Get(key); existVal != nil && bytes.Compare(existVal, value) == 0 {
+			return
+		}
+	}
+
 	db.strIndex.mu.Lock()
 	defer db.strIndex.mu.Unlock()
 
@@ -400,7 +407,7 @@ func (db *MinDB) doSet(key, value []byte) (err error) {
 		return err
 	}
 
-	//数据索引
+	//数据索引  store in skiplist.
 	idx := &index.Indexer{
 		Meta: &storage.Meta{
 			KeySize: uint32(len(e.Meta.Key)),

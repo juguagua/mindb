@@ -1,6 +1,7 @@
 package mindb
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,8 +162,16 @@ func (db *MinDB) Close() error {
 		return err
 	}
 
+	// close and sync the active file
 	if err := db.activeFile.Close(true); err != nil {
 		return err
+	}
+
+	// close the archived files.
+	for _, archFile := range db.archFiles {
+		if err := archFile.Sync(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -200,15 +209,24 @@ func (db *MinDB) Reclaim() (err error) {
 		newArchFiles        = make(ArchivedFiles)
 		df           *storage.DBFile
 	)
-
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	for _, file := range db.archFiles {
 		var offset int64 = 0
 		var reclaimEntries []*storage.Entry
 
+		var dfFile *os.File
+		dfFile, err = os.Open(file.File.Name())
+		if err != nil {
+			return err
+		}
+		file.File = dfFile
+		fileId := file.Id
+
 		for {
 			if e, err := file.Read(offset); err == nil {
 				//判断是否为有效的entry
-				if db.validEntry(e) {
+				if db.validEntry(e, offset, fileId) {
 					reclaimEntries = append(reclaimEntries, e)
 				}
 
@@ -300,7 +318,7 @@ func (db *MinDB) checkKeyValue(key []byte, value ...[]byte) error {
 func (db *MinDB) saveConfig() (err error) {
 	//保存配置
 	path := db.config.DirPath + configSaveFile
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 
 	bytes, err := json.Marshal(db.config)
 	_, err = file.Write(bytes)
@@ -341,10 +359,10 @@ func (db *MinDB) buildIndex(e *storage.Entry, idx *index.Indexer) error {
 // 写数据
 func (db *MinDB) store(e *storage.Entry) error {
 
-	//如果数据文件空间不够，则关闭该文件，并新打开一个文件
+	//如果数据文件空间不够，则持久化该文件，并新打开一个文件
 	config := db.config
 	if db.activeFile.Offset+int64(e.Size()) > config.BlockSize {
-		if err := db.activeFile.Close(true); err != nil {
+		if err := db.activeFile.Sync(); err != nil {
 			return err
 		}
 
@@ -388,7 +406,7 @@ func (db *MinDB) store(e *storage.Entry) error {
 }
 
 // 判断entry所属的操作标识(增、改类型的操作)，以及val是否是有效的
-func (db *MinDB) validEntry(e *storage.Entry) bool {
+func (db *MinDB) validEntry(e *storage.Entry, offset int64, fileId uint32) bool {
 
 	if e == nil {
 		return false
@@ -398,10 +416,24 @@ func (db *MinDB) validEntry(e *storage.Entry) bool {
 	switch e.Type {
 	case String:
 		if mark == StringSet { // 和当前索引的内容进行比较
+			// expired key is not valid.
 			now := uint32(time.Now().Unix())
 			if deadline, exist := db.expires[string(e.Meta.Key)]; exist && deadline <= now {
 				return false
 			}
+
+			// check the data position.
+			node := db.strIndex.idxList.Get(e.Meta.Key)
+			if node == nil {
+				return false
+			}
+			indexer := node.Value().(*index.Indexer)
+			if bytes.Compare(indexer.Meta.Key, e.Meta.Key) == 0 {
+				if indexer == nil || indexer.FileId != fileId || indexer.Offset != offset {
+					return false
+				}
+			}
+
 			if val, err := db.Get(e.Meta.Key); err == nil && string(val) == string(e.Meta.Value) {
 				return true
 			}
