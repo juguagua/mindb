@@ -1,6 +1,7 @@
 package mindb
 
 import (
+	"bytes"
 	"mindb/ds/hash"
 	"mindb/storage"
 	"sync"
@@ -25,6 +26,12 @@ func newHashIdx() *HashIdx {
 func (db *MinDB) HSet(key, field, value []byte) (res int, err error) {
 
 	if err = db.checkKeyValue(key, value); err != nil {
+		return
+	}
+
+	// If the existed value is the same as the set value, nothing will be done.
+	oldVal := db.HGet(key, field)
+	if bytes.Compare(oldVal, value) == 0 {
 		return
 	}
 
@@ -65,6 +72,10 @@ func (db *MinDB) HSetNx(key, field, value []byte) (res bool, err error) {
 // HGet 返回哈希表中给定域的值
 func (db *MinDB) HGet(key, field []byte) []byte {
 
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return nil
+	}
+
 	db.hashIndex.mu.RLock()
 	defer db.hashIndex.mu.RUnlock()
 
@@ -73,6 +84,10 @@ func (db *MinDB) HGet(key, field []byte) []byte {
 
 // HGetAll 返回哈希表 key 中，所有的域和值
 func (db *MinDB) HGetAll(key []byte) [][]byte {
+
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return nil
+	}
 
 	db.hashIndex.mu.RLock()
 	defer db.hashIndex.mu.RUnlock()
@@ -83,6 +98,10 @@ func (db *MinDB) HGetAll(key []byte) [][]byte {
 // HDel 删除哈希表 key 中的一个或多个指定域，不存在的域将被忽略
 // 返回被成功移除的元素个数
 func (db *MinDB) HDel(key []byte, field ...[]byte) (res int, err error) {
+
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return
+	}
 
 	if field == nil || len(field) == 0 {
 		return

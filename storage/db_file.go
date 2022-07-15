@@ -16,9 +16,6 @@ const (
 	// FilePerm 默认的创建文件权限, 0644表示用户具有读写权限，组用户和其他用户具有只读权限
 	FilePerm = 0644
 
-	// DBFileFormatName 默认数据文件名称格式化
-	DBFileFormatName = "%09d.data"
-
 	// PathSeparator the default path separator
 	PathSeparator = string(os.PathSeparator)
 )
@@ -27,7 +24,21 @@ var (
 	ErrEmptyEntry = errors.New("storage/db_file: entry or the Key of entry is empty")
 )
 
-// FileRWMethod 文件数据读写的方式
+var (
+	// DBFileFormatNames 默认数据文件名称格式化
+	DBFileFormatNames = map[uint16]string{
+		0: "%09d.data.str",
+		1: "%09d.data.list",
+		2: "%09d.data.hash",
+		3: "%09d.data.set",
+		4: "%09d.data.zset",
+	}
+
+	// DBFileSuffixName represent the suffix names of the db files.
+	DBFileSuffixName = []string{"str", "list", "hash", "set", "zset"}
+)
+
+// FileRWMethod 数据文件数据读写的方式
 type FileRWMethod uint8
 
 const (
@@ -51,8 +62,8 @@ type DBFile struct {
 }
 
 // NewDBFile 新建一个数据读写文件，如果是MMap，则需要Truncate文件并进行加载
-func NewDBFile(path string, fileId uint32, method FileRWMethod, blockSize int64) (*DBFile, error) {
-	filePath := path + PathSeparator + fmt.Sprintf(DBFileFormatName, fileId)
+func NewDBFile(path string, fileId uint32, method FileRWMethod, blockSize int64, eType uint16) (*DBFile, error) {
+	filePath := path + PathSeparator + fmt.Sprintf(DBFileFormatNames[eType], fileId) // 要指定文件的数据类型
 
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, FilePerm)
 	if err != nil {
@@ -195,38 +206,57 @@ func (df *DBFile) Sync() (err error) {
 }
 
 // Build 加载数据文件
-func Build(path string, method FileRWMethod, blockSize int64) (map[uint32]*DBFile, uint32, error) {
+func Build(path string, method FileRWMethod, blockSize int64) (map[uint16]map[uint32]*DBFile, map[uint16]uint32, error) {
 	dir, err := ioutil.ReadDir(path) // 读取该目录下的文件和目录
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
-	var fileIDs []int
+	fileIdsMap := make(map[uint16][]int) // map的key为文件类型，val为文件id
 	for _, d := range dir {
-		if strings.HasSuffix(d.Name(), "data") { // 如果是data为后缀即是数据文件
+		if strings.Contains(d.Name(), ".data") { // 如果包含.data即是数据文件
 			splitNames := strings.Split(d.Name(), ".")
 			id, _ := strconv.Atoi(splitNames[0])
-			fileIDs = append(fileIDs, id) // 将数据文件的id加入到fileIds切片中
-		}
-	}
-
-	sort.Ints(fileIDs) // 对收集到的文件id进行排序
-	var activeFileId uint32 = 0
-	archFiles := make(map[uint32]*DBFile)
-	if len(fileIDs) > 0 {
-		activeFileId = uint32(fileIDs[len(fileIDs)-1]) // active file一定是id最大（最后被写入）的文件
-
-		for i := 0; i < len(fileIDs)-1; i++ {
-			id := fileIDs[i]
-
-			file, err := NewDBFile(path, uint32(id), method, blockSize) // 将文件封装起来
-			if err != nil {
-				return nil, activeFileId, err
+			switch splitNames[2] { // 根据文件类型加入到相应的文件id切片中
+			case DBFileSuffixName[0]:
+				fileIdsMap[0] = append(fileIdsMap[0], id)
+			case DBFileSuffixName[1]:
+				fileIdsMap[1] = append(fileIdsMap[1], id)
+			case DBFileSuffixName[2]:
+				fileIdsMap[2] = append(fileIdsMap[2], id)
+			case DBFileSuffixName[3]:
+				fileIdsMap[3] = append(fileIdsMap[3], id)
+			case DBFileSuffixName[4]:
+				fileIdsMap[4] = append(fileIdsMap[4], id)
 			}
-
-			archFiles[uint32(id)] = file // 将数据文件和它的id一一对应写到map中
 		}
 	}
 
-	return archFiles, activeFileId, nil
+	// 加载所有的数据文件
+	activeFileIds := make(map[uint16]uint32)         // 每个文件类型都有一个activeFile，所以用map来存储，存储每个类型的active file id
+	archFiles := make(map[uint16]map[uint32]*DBFile) // 存储每个类型的文件id和其对应的数据文件
+	var dataType uint16 = 0
+	for ; dataType < 5; dataType++ { // 遍历每种类型的数据文件
+		fileIDs := fileIdsMap[dataType]   // 取出相应类型的文件id切片
+		sort.Ints(fileIDs)                // 排序
+		files := make(map[uint32]*DBFile) // 文件id和数据文件的映射
+		var activeFileId uint32 = 0
+
+		if len(fileIDs) > 0 {
+			activeFileId = uint32(fileIDs[len(fileIDs)-1]) // 最大的那个文件id为active file id
+
+			for i := 0; i < len(fileIDs)-1; i++ {
+				id := fileIDs[i]
+
+				file, err := NewDBFile(path, uint32(id), method, blockSize, dataType)
+				if err != nil {
+					return nil, nil, err
+				}
+				files[uint32(id)] = file // 将arch file和其id对应起来
+			}
+		}
+		archFiles[dataType] = files // 加入到相应的map映射中
+		activeFileIds[dataType] = activeFileId
+	}
+	return archFiles, activeFileIds, nil
 }

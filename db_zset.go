@@ -26,6 +26,11 @@ func (db *MinDB) ZAdd(key []byte, score float64, member []byte) error {
 		return err
 	}
 
+	// if the score corresponding to the key and member already exist, nothing will be done.
+	if oldScore := db.ZScore(key, member); oldScore == score {
+		return nil
+	}
+
 	db.zsetIndex.mu.Lock()
 	defer db.zsetIndex.mu.Unlock()
 

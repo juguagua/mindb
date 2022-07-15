@@ -2,12 +2,15 @@ package mindb
 
 import (
 	"io"
+	"log"
 	"mindb/ds/list"
 	"mindb/index"
+	"mindb/storage"
 	"mindb/utils"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -183,44 +186,58 @@ func (db *MinDB) loadIdxFromFiles() error {
 		return nil
 	}
 
-	var fileIds []int
-	dbFile := make(ArchivedFiles)
-	for k, v := range db.archFiles { // 从db的archFiles中取出所有的archFiles
-		dbFile[k] = v
-		fileIds = append(fileIds, int(k))
-	}
+	wg := sync.WaitGroup{}
+	wg.Add(5)
+	for dataType := 0; dataType < 5; dataType++ {
+		go func(dType uint16) {
+			defer func() {
+				wg.Done()
+			}()
 
-	dbFile[db.activeFileId] = db.activeFile
-	fileIds = append(fileIds, int(db.activeFileId))
-
-	sort.Ints(fileIds) // 对file id进行排序后遍历
-	for i := 0; i < len(fileIds); i++ {
-		fid := uint32(fileIds[i])
-		df := dbFile[fid]
-		var offset int64 = 0
-
-		for offset <= db.config.BlockSize { // 读当前文件
-			if e, err := df.Read(offset); err == nil { // 从当前数据文件中取出entry
-				idx := &index.Indexer{ // 根据该entry构建索引结构
-					Meta:      e.Meta,
-					FileId:    fid,
-					EntrySize: e.Size(),
-					Offset:    offset,
-				}
-				offset += int64(e.Size()) // 更新offset
-
-				if err := db.buildIndex(e, idx); err != nil { // 建立索引
-					return err
-				}
-			} else {
-				if err == io.EOF { // 该文件读完就退出
-					break
-				}
-
-				return err
+			// archived files
+			var fileIds []int
+			dbFile := make(map[uint32]*storage.DBFile)
+			for k, v := range db.archFiles[dType] {
+				dbFile[k] = v
+				fileIds = append(fileIds, int(k))
 			}
-		}
-	}
 
+			// active file
+			dbFile[db.activeFileIds[dType]] = db.activeFile[dType]
+			fileIds = append(fileIds, int(db.activeFileIds[dType]))
+
+			// load the db files in a specified order.
+			sort.Ints(fileIds)
+			for i := 0; i < len(fileIds); i++ {
+				fid := uint32(fileIds[i])
+				df := dbFile[fid]
+				var offset int64 = 0
+
+				for offset <= db.config.BlockSize {
+					if e, err := df.Read(offset); err == nil {
+						idx := &index.Indexer{
+							Meta:      e.Meta,
+							FileId:    fid,
+							EntrySize: e.Size(),
+							Offset:    offset,
+						}
+						offset += int64(e.Size())
+
+						if len(e.Meta.Key) > 0 {
+							if err := db.buildIndex(e, idx); err != nil {
+								log.Fatalf("a fatal err occurred, the db can not open.[%+v]", err)
+							}
+						}
+					} else {
+						if err == io.EOF {
+							break
+						}
+						log.Fatalf("a fatal err occurred, the db can not open.[%+v]", err)
+					}
+				}
+			}
+		}(uint16(dataType))
+	}
+	wg.Wait()
 	return nil
 }

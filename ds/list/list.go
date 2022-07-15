@@ -18,10 +18,17 @@ const (
 	After
 )
 
+// existFlag set the value exist in List
+var existFlag = struct{}{}
+
 type (
 	// List list idx
 	List struct {
+		// record saves the List of a specified key.
 		record Record
+
+		// values saves the values of a List, help checking if a value exists in List.
+		values map[string]map[string]struct{}
 	}
 
 	// Record list record to save
@@ -32,6 +39,7 @@ type (
 func New() *List {
 	return &List{
 		make(Record),
+		make(map[string]map[string]struct{}),
 	}
 }
 
@@ -114,6 +122,11 @@ func (lis *List) LRem(key string, val []byte, count int) int {
 
 	length := len(ele)
 	ele = nil // ele切片置空 （目的是啥子？）
+
+	if lis.values[key] != nil {
+		delete(lis.values[key], string(val))
+	}
+
 	return length
 }
 
@@ -133,18 +146,31 @@ func (lis *List) LInsert(key string, option InsertOption, pivot, val []byte) int
 		item.InsertAfter(val, e)
 	}
 
+	if lis.values[key] == nil {
+		lis.values[key] = make(map[string]struct{})
+	}
+	lis.values[key][string(val)] = existFlag
+
 	return item.Len()
 }
 
 // LSet 将列表 key 下标为 index 的元素的值设置为 val
 //bool返回值表示操作是否成功
-func (lis List) LSet(key string, index int, val []byte) bool {
+func (lis *List) LSet(key string, index int, val []byte) bool {
 	e := lis.index(key, index)
 	if e == nil {
 		return false
 	}
 
+	if lis.values[key] == nil {
+		lis.values[key] = make(map[string]struct{})
+	}
+	if e.Value != nil {
+		delete(lis.values[key], string(e.Value.([]byte)))
+	}
+
 	e.Value = val // 给element的Value重新赋值
+	lis.values[key][string(val)] = existFlag
 	return true
 }
 
@@ -197,6 +223,7 @@ func (lis *List) LRange(key string, start, end int) [][]byte {
 // LTrim 对一个列表进行修剪(trim)，让列表只保留指定区间内的元素，不在指定区间之内的元素都将被删除
 func (lis *List) LTrim(key string, start, end int) bool {
 	item := lis.record[key]
+	lis.values[key] = nil
 	if item == nil || item.Len() <= 0 {
 		return false
 	}
@@ -218,12 +245,17 @@ func (lis *List) LTrim(key string, start, end int) bool {
 	startEle, endEle := lis.index(key, start), lis.index(key, end)
 	if end-start+1 < (length >> 1) {
 		newList := list.New()
+		newValuesMap := make(map[string]struct{})
 		for p := startEle; p != endEle.Next(); p = p.Next() {
 			newList.PushBack(p.Value)
+			if p.Value != nil {
+				newValuesMap[string(p.Value.([]byte))] = existFlag
+			}
 		}
 
 		item = nil
 		lis.record[key] = newList
+		lis.values[key] = newValuesMap
 	} else {
 		var ele []*list.Element
 		for p := item.Front(); p != startEle; p = p.Next() {
@@ -235,6 +267,9 @@ func (lis *List) LTrim(key string, start, end int) bool {
 
 		for _, e := range ele {
 			item.Remove(e)
+			if lis.values[key] != nil && e.Value != nil {
+				delete(lis.values[key], string(e.Value.([]byte)))
+			}
 		}
 
 		ele = nil
@@ -251,6 +286,20 @@ func (lis *List) LLen(key string) int {
 	}
 
 	return length
+}
+
+// LKeyExists check if the key of a List exists.
+func (lis *List) LKeyExists(key string) (ok bool) {
+	_, ok = lis.record[key]
+	return
+}
+
+// LValExists check if the val exists in a specified List stored at key.
+func (lis *List) LValExists(key string, val []byte) (ok bool) {
+	if lis.values[key] != nil {
+		_, ok = lis.values[key][string(val)]
+	}
+	return
 }
 
 // 查找key对应的list中Value为给定val的element
@@ -306,6 +355,9 @@ func (lis *List) push(front bool, key string, val ...[]byte) int {
 	if lis.record[key] == nil { // record是一个map，如果map中没有相应的key，就创建一个对应的list
 		lis.record[key] = list.New()
 	}
+	if lis.values[key] == nil {
+		lis.values[key] = make(map[string]struct{})
+	}
 
 	for _, v := range val { // 遍历要插入的value值，挨着插入
 		if front {
@@ -313,6 +365,7 @@ func (lis *List) push(front bool, key string, val ...[]byte) int {
 		} else {
 			lis.record[key].PushBack(v)
 		}
+		lis.values[key][string(v)] = existFlag
 	}
 
 	return lis.record[key].Len() // 返回这个key对应的list的长度
@@ -333,6 +386,9 @@ func (lis *List) pop(front bool, key string) []byte {
 
 		val = e.Value.([]byte) // 记录下相应值
 		item.Remove(e)         // 在list中删除该值
+		if lis.values[key] != nil {
+			delete(lis.values[key], string(val))
+		}
 	}
 
 	return val

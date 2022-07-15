@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"mindb/index"
 	"mindb/storage"
 	"mindb/utils"
@@ -59,22 +60,27 @@ const (
 
 type (
 	MinDB struct {
-		activeFile   *storage.DBFile //当前活跃文件
-		activeFileId uint32          //活跃文件id
-		archFiles    ArchivedFiles   //已封存文件
-		strIndex     *StrIdx         //字符串索引列表
-		listIndex    *ListIdx        //list索引列表
-		hashIndex    *HashIdx        //hash索引列表
-		setIndex     *SetIdx         //集合索引列表
-		zsetIndex    *ZsetIdx        //有序集合索引列表
-		config       Config          //数据库配置
-		mu           sync.RWMutex    //mutex
-		meta         *storage.DBMeta //数据库配置额外信息
-		expires      storage.Expires //过期字典
+		activeFile    ActiveFiles     //当前活跃文件
+		activeFileIds ActiveFileIds   //活跃文件id
+		archFiles     ArchivedFiles   //已封存文件
+		strIndex      *StrIdx         //字符串索引列表
+		listIndex     *ListIdx        //list索引列表
+		hashIndex     *HashIdx        //hash索引列表
+		setIndex      *SetIdx         //集合索引列表
+		zsetIndex     *ZsetIdx        //有序集合索引列表
+		config        Config          //数据库配置
+		mu            sync.RWMutex    //mutex
+		meta          *storage.DBMeta //数据库配置额外信息
+		expires       storage.Expires //过期字典
 	}
 
-	// ArchivedFiles 已封存的文件map索引
-	ArchivedFiles map[uint32]*storage.DBFile
+	// ActiveFiles 不同类型的当前活跃文件
+	ActiveFiles map[DataType]*storage.DBFile
+
+	ActiveFileIds map[DataType]uint32
+
+	// ArchivedFiles 不同类型的已封存的文件map索引
+	ArchivedFiles map[DataType]map[uint32]*storage.DBFile
 )
 
 // Open 打开一个数据库实例
@@ -88,13 +94,19 @@ func Open(config Config) (*MinDB, error) {
 	}
 
 	//加载数据文件
-	archFiles, activeFileId, err := storage.Build(config.DirPath, config.RwMethod, config.BlockSize)
+	archFiles, activeFileIds, err := storage.Build(config.DirPath, config.RwMethod, config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
-	activeFile, err := storage.NewDBFile(config.DirPath, activeFileId, config.RwMethod, config.BlockSize)
-	if err != nil {
-		return nil, err
+
+	// 加载活跃文件
+	activeFiles := make(ActiveFiles)
+	for dataType, fileId := range activeFileIds {
+		file, err := storage.NewDBFile(config.DirPath, fileId, config.RwMethod, config.BlockSize, dataType)
+		if err != nil {
+			return nil, err
+		}
+		activeFiles[dataType] = file
 	}
 
 	//加载过期字典
@@ -103,23 +115,26 @@ func Open(config Config) (*MinDB, error) {
 	//加载数据库额外信息（meta）
 	meta, _ := storage.LoadMeta(config.DirPath + dbMetaSaveFile)
 
-	activeFile.Offset = meta.ActiveWriteOff // 更新当前活跃文件的写偏移
-
-	db := &MinDB{
-		activeFile:   activeFile,
-		archFiles:    archFiles,
-		config:       config,
-		activeFileId: activeFileId,
-		meta:         meta,
-		strIndex:     newStrIdx(),
-		listIndex:    newListIdx(),
-		hashIndex:    newHashIdx(),
-		setIndex:     newSetIdx(),
-		zsetIndex:    newZsetIdx(),
-		expires:      expires,
+	// 更新当前活跃文件的写偏移
+	for dataType, file := range activeFiles {
+		file.Offset = meta.ActiveWriteOff[dataType]
 	}
 
-	//加载索引信息
+	db := &MinDB{
+		activeFile:    activeFiles,
+		activeFileIds: activeFileIds,
+		archFiles:     archFiles,
+		config:        config,
+		meta:          meta,
+		strIndex:      newStrIdx(),
+		listIndex:     newListIdx(),
+		hashIndex:     newHashIdx(),
+		setIndex:      newSetIdx(),
+		zsetIndex:     newZsetIdx(),
+		expires:       expires,
+	}
+
+	// 从文件中加载索引信息
 	if err := db.loadIdxFromFiles(); err != nil {
 		return nil, err
 	}
@@ -163,14 +178,18 @@ func (db *MinDB) Close() error {
 	}
 
 	// close and sync the active file
-	if err := db.activeFile.Close(true); err != nil {
-		return err
+	for _, file := range db.activeFile {
+		if err := file.Close(true); err != nil {
+			return err
+		}
 	}
 
 	// close the archived files.
 	for _, archFile := range db.archFiles {
-		if err := archFile.Sync(); err != nil {
-			return err
+		for _, file := range archFile {
+			if err := file.Sync(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -185,13 +204,27 @@ func (db *MinDB) Sync() error {
 
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	return db.activeFile.Sync()
+	for _, file := range db.activeFile {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Reclaim 重新组织磁盘中的数据，回收磁盘空间
+// Currently reclaim will block read operation of String in KeyOnlyMemMode.
+// Because we must get value from db files, so you can execute it while closing the db.
 func (db *MinDB) Reclaim() (err error) {
 
-	if len(db.archFiles) < db.config.ReclaimThreshold {
+	var reclaimable bool
+	for _, archFiles := range db.archFiles {
+		if len(archFiles) >= db.config.ReclaimThreshold {
+			reclaimable = true
+			break
+		}
+	}
+	if !reclaimable {
 		return ErrReclaimUnreached
 	}
 
@@ -203,85 +236,117 @@ func (db *MinDB) Reclaim() (err error) {
 
 	defer os.RemoveAll(reclaimPath)
 
-	var (
-		//success             = true
-		activeFileId uint32 = 0
-		newArchFiles        = make(ArchivedFiles)
-		df           *storage.DBFile
-	)
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	for _, file := range db.archFiles {
-		var offset int64 = 0
-		var reclaimEntries []*storage.Entry
 
-		var dfFile *os.File
-		dfFile, err = os.Open(file.File.Name())
-		if err != nil {
-			return err
-		}
-		file.File = dfFile
-		fileId := file.Id
+	// 用goroutine处理不同类型的文件
+	newArchivedFiles := sync.Map{}
+	reclaimedTypes := sync.Map{}
+	wg := sync.WaitGroup{}
+	wg.Add(5)
+	for i := 0; i < 5; i++ {
+		go func(dType uint16) {
+			defer func() {
+				wg.Done()
+			}()
 
-		for {
-			if e, err := file.Read(offset); err == nil {
-				//判断是否为有效的entry
-				if db.validEntry(e, offset, fileId) {
-					reclaimEntries = append(reclaimEntries, e)
-				}
-
-				offset += int64(e.Size())
-			} else {
-				if err == io.EOF {
-					break
-				}
-
-				return err
+			if len(db.archFiles[dType]) < db.config.ReclaimThreshold {
+				newArchivedFiles.Store(dType, db.archFiles[dType])
+				return
 			}
-		}
 
-		//重新将entry写入到文件中
-		if len(reclaimEntries) > 0 {
-			for _, entry := range reclaimEntries {
-				if df == nil || int64(entry.Size())+df.Offset > db.config.BlockSize {
-					df, err = storage.NewDBFile(reclaimPath, activeFileId, db.config.RwMethod, db.config.BlockSize)
-					if err != nil {
+			var (
+				df        *storage.DBFile
+				fileId    uint32
+				archFiles = make(map[uint32]*storage.DBFile)
+			)
+			for _, file := range db.archFiles[dType] {
+				var offset int64 = 0
+				var reclaimEntries []*storage.Entry
+
+				// read all entries in db file, and find the valid entry.
+				for {
+					if e, err := file.Read(offset); err == nil {
+						if db.validEntry(e, offset, file.Id) {
+							reclaimEntries = append(reclaimEntries, e)
+						}
+						offset += int64(e.Size())
+					} else {
+						if err == io.EOF {
+							break
+						}
+						log.Fatalf("err occurred when read the entry: %+v", err)
+						return
+					}
+				}
+
+				// rewrite the valid entries to new db file.
+				for _, entry := range reclaimEntries {
+					if df == nil || int64(entry.Size())+df.Offset > db.config.BlockSize {
+						df, err = storage.NewDBFile(reclaimPath, fileId, db.config.RwMethod, db.config.BlockSize, dType)
+						if err != nil {
+							log.Fatalf("err occurred when create new db file: %+v", err)
+							return
+						}
+						archFiles[fileId] = df
+						fileId += 1
+					}
+
+					if err = df.Write(entry); err != nil {
+						log.Fatalf("err occurred when write the entry: %+v", err)
 						return
 					}
 
-					newArchFiles[activeFileId] = df
-					activeFileId++
+					//字符串类型的数据需要在这里更新索引
+					// Since the str types value will be read from db file, so should update the index info.
+					if dType == String {
+						item := db.strIndex.idxList.Get(entry.Meta.Key)
+						idx := item.Value().(*index.Indexer)
+						idx.Offset = df.Offset - int64(entry.Size())
+						idx.FileId = fileId
+						db.strIndex.idxList.Put(idx.Meta.Key, idx)
+					}
 				}
+			}
+			reclaimedTypes.Store(dType, struct{}{})
+			newArchivedFiles.Store(dType, archFiles)
+		}(uint16(i))
+	}
+	wg.Wait()
 
-				if err = df.Write(entry); err != nil {
-					return
-				}
+	dbArchivedFiles := make(ArchivedFiles)
+	for i := 0; i < 5; i++ {
+		dType := uint16(i)
+		value, ok := newArchivedFiles.Load(dType)
+		if !ok {
+			log.Printf("one type of data(%d) is missed after reclaiming.", dType)
+			return
+		}
+		dbArchivedFiles[dType] = value.(map[uint32]*storage.DBFile)
+	}
 
-				//更新字符串索引
-				if entry.Type == String {
-					item := db.strIndex.idxList.Get(entry.Meta.Key)
-					idx := item.Value().(*index.Indexer)
-					idx.Offset = df.Offset - int64(entry.Size())
-					idx.FileId = activeFileId
-					db.strIndex.idxList.Put(idx.Meta.Key, idx)
-				}
+	//delete the old db files.
+	for dataType, files := range db.archFiles {
+		if _, exist := reclaimedTypes.Load(dataType); exist {
+			for _, f := range files {
+				_ = os.Remove(f.File.Name())
 			}
 		}
 	}
 
-	//旧数据删除，临时目录拷贝为新的数据文件
-	for _, v := range db.archFiles {
-		_ = os.Remove(v.File.Name())
+	//copy the temporary reclaim directory as new db files.
+	for dataType, files := range dbArchivedFiles {
+		if _, exist := reclaimedTypes.Load(dataType); exist {
+			for _, f := range files {
+				name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatNames[dataType], f.Id)
+				os.Rename(reclaimPath+name, db.config.DirPath+name)
+			}
+		}
 	}
 
-	for _, v := range newArchFiles {
-		name := storage.PathSeparator + fmt.Sprintf(storage.DBFileFormatName, v.Id)
-		os.Rename(reclaimPath+name, db.config.DirPath+name)
-	}
-
-	db.archFiles = newArchFiles
-
+	db.archFiles = dbArchivedFiles
 	return
+
 }
 
 // Backup 复制数据库目录，用于备份
@@ -361,23 +426,23 @@ func (db *MinDB) store(e *storage.Entry) error {
 
 	//如果数据文件空间不够，则持久化该文件，并新打开一个文件
 	config := db.config
-	if db.activeFile.Offset+int64(e.Size()) > config.BlockSize {
-		if err := db.activeFile.Sync(); err != nil {
+	if db.activeFile[e.Type].Offset+int64(e.Size()) > config.BlockSize {
+		if err := db.activeFile[e.Type].Sync(); err != nil {
 			return err
 		}
 
 		//保存旧的文件
-		db.archFiles[db.activeFileId] = db.activeFile
+		activeFileId := db.activeFileIds[e.Type]
+		db.archFiles[e.Type][activeFileId] = db.activeFile[e.Type]
+		activeFileId = activeFileId + 1
 
-		activeFileId := db.activeFileId + 1
-
-		if dbFile, err := storage.NewDBFile(config.DirPath, activeFileId, config.RwMethod, config.BlockSize); err != nil {
+		newDbFile, err := storage.NewDBFile(config.DirPath, activeFileId, config.RwMethod, config.BlockSize, e.Type)
+		if err != nil {
 			return err
-		} else {
-			db.activeFile = dbFile
-			db.activeFileId = activeFileId
-			db.meta.ActiveWriteOff = 0
 		}
+		db.activeFile[e.Type] = newDbFile
+		db.activeFileIds[e.Type] = activeFileId
+		db.meta.ActiveWriteOff[e.Type] = 0
 	}
 	//
 	////如果key已经存在，则原来的值被舍弃，所以需要新增可回收的磁盘空间值
@@ -388,16 +453,16 @@ func (db *MinDB) store(e *storage.Entry) error {
 	//	}
 	//}
 
-	// 写入数据至文件中
-	if err := db.activeFile.Write(e); err != nil {
+	// 写入entry至文件中
+	if err := db.activeFile[e.Type].Write(e); err != nil {
 		return err
 	}
 
-	db.meta.ActiveWriteOff = db.activeFile.Offset
+	db.meta.ActiveWriteOff[e.Type] = db.activeFile[e.Type].Offset
 
 	// 数据持久化
 	if config.Sync {
-		if err := db.activeFile.Sync(); err != nil {
+		if err := db.activeFile[e.Type].Sync(); err != nil {
 			return err
 		}
 	}
@@ -441,8 +506,9 @@ func (db *MinDB) validEntry(e *storage.Entry, offset int64, fileId uint32) bool 
 	case List:
 		if mark == ListLPush || mark == ListRPush || mark == ListLInsert || mark == ListLSet {
 			// TODO 由于List是链表结构，无法有效的进行检索，取出全部数据依次比较的开销太大
-			//因此暂时不参与reclaim，后续再想想其他的解决方案
-			return true
+			if db.LValExists(e.Meta.Key, e.Meta.Value) {
+				return true
+			}
 		}
 	case Hash:
 		if mark == HashHSet {

@@ -29,12 +29,14 @@ func (db *MinDB) SAdd(key []byte, members ...[]byte) (res int, err error) {
 	defer db.setIndex.mu.Unlock()
 
 	for _, m := range members {
-		e := storage.NewEntryNoExtra(key, m, Set, SetSAdd)
-		if err = db.store(e); err != nil {
-			return
+		exist := db.setIndex.indexes.SIsMember(string(key), m)
+		if !exist {
+			e := storage.NewEntryNoExtra(key, m, Set, SetSAdd)
+			if err = db.store(e); err != nil {
+				return
+			}
+			res = db.setIndex.indexes.SAdd(string(key), m)
 		}
-
-		res = db.setIndex.indexes.SAdd(string(key), m)
 	}
 
 	return

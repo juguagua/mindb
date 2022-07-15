@@ -2,7 +2,6 @@ package mindb
 
 import (
 	"bytes"
-	"log"
 	"mindb/ds/list"
 	"mindb/storage"
 	"strconv"
@@ -66,6 +65,10 @@ func (db *MinDB) RPush(key []byte, values ...[]byte) (res int, err error) {
 // LPop 取出列表头部的元素
 func (db *MinDB) LPop(key []byte) ([]byte, error) {
 
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return nil, err
+	}
+
 	db.listIndex.mu.Lock()
 	defer db.listIndex.mu.Unlock()
 
@@ -74,7 +77,7 @@ func (db *MinDB) LPop(key []byte) ([]byte, error) {
 	if val != nil {
 		e := storage.NewEntryNoExtra(key, val, List, ListLPop)
 		if err := db.store(e); err != nil {
-			log.Println("error occurred when store ListLPop data")
+			return nil, err
 		}
 	}
 
@@ -84,6 +87,10 @@ func (db *MinDB) LPop(key []byte) ([]byte, error) {
 // RPop 取出列表尾部的元素
 func (db *MinDB) RPop(key []byte) ([]byte, error) {
 
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return nil, err
+	}
+
 	db.listIndex.mu.Lock()
 	defer db.listIndex.mu.Unlock()
 
@@ -92,7 +99,7 @@ func (db *MinDB) RPop(key []byte) ([]byte, error) {
 	if val != nil {
 		e := storage.NewEntryNoExtra(key, val, List, ListRPop)
 		if err := db.store(e); err != nil {
-			log.Println("error occurred when store ListRPop data")
+			return nil, err
 		}
 	}
 
@@ -101,6 +108,10 @@ func (db *MinDB) RPop(key []byte) ([]byte, error) {
 
 // LIndex 返回列表在index处的值，如果不存在则返回nil
 func (db *MinDB) LIndex(key []byte, idx int) []byte {
+
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return nil
+	}
 
 	db.listIndex.mu.RLock()
 	defer db.listIndex.mu.RUnlock()
@@ -114,6 +125,10 @@ func (db *MinDB) LIndex(key []byte, idx int) []byte {
 // count = 0 : 移除列表中所有与 value 相等的值
 // 返回成功删除的元素个数
 func (db *MinDB) LRem(key, value []byte, count int) (int, error) {
+
+	if err := db.checkKeyValue(key, value); err != nil {
+		return 0, nil
+	}
 
 	db.listIndex.mu.Lock()
 	defer db.listIndex.mu.Unlock()
@@ -187,6 +202,10 @@ func (db *MinDB) LSet(key []byte, idx int, val []byte) (bool, error) {
 // LTrim 对一个列表进行修剪(trim)，让列表只保留指定区间内的元素，不在指定区间之内的元素都将被删除
 func (db *MinDB) LTrim(key []byte, start, end int) error {
 
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return err
+	}
+
 	db.listIndex.mu.Lock()
 	defer db.listIndex.mu.Unlock()
 
@@ -209,12 +228,13 @@ func (db *MinDB) LTrim(key []byte, start, end int) error {
 // 如果 start 下标比列表的最大下标(len-1)还要大，那么 LRange 返回一个空列表
 // 如果 end 下标比 len 还要大，则将 end 的值设置为 len - 1
 func (db *MinDB) LRange(key []byte, start, end int) ([][]byte, error) {
-	db.listIndex.mu.RLock()
-	defer db.listIndex.mu.RUnlock()
 
 	if err := db.checkKeyValue(key, nil); err != nil {
 		return nil, err
 	}
+
+	db.listIndex.mu.RLock()
+	defer db.listIndex.mu.RUnlock()
 
 	return db.listIndex.indexes.LRange(string(key), start, end), nil
 }
@@ -222,8 +242,38 @@ func (db *MinDB) LRange(key []byte, start, end int) ([][]byte, error) {
 // LLen 返回指定key的列表中的元素个数
 func (db *MinDB) LLen(key []byte) int {
 
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return 0
+	}
+
 	db.listIndex.mu.RLock()
 	defer db.listIndex.mu.RUnlock()
 
 	return db.listIndex.indexes.LLen(string(key))
+}
+
+// LKeyExists 检查指定key在list中是否存在
+func (db *MinDB) LKeyExists(key []byte) (ok bool) {
+	if err := db.checkKeyValue(key, nil); err != nil {
+		return
+	}
+
+	db.listIndex.mu.RLock()
+	defer db.listIndex.mu.RUnlock()
+
+	ok = db.listIndex.indexes.LKeyExists(string(key))
+	return
+}
+
+// LValExists check if the val exists in a specified List stored at key.
+func (db *MinDB) LValExists(key []byte, val []byte) (ok bool) {
+	if err := db.checkKeyValue(key, val); err != nil {
+		return
+	}
+
+	db.listIndex.mu.RLock()
+	defer db.listIndex.mu.RUnlock()
+
+	ok = db.listIndex.indexes.LValExists(string(key), val)
+	return
 }

@@ -8,12 +8,12 @@ import (
 
 // DBMeta 保存数据库的一些额外信息
 type DBMeta struct {
-	ActiveWriteOff int64 `json:"active_write_off"` //当前数据文件的写偏移
+	ActiveWriteOff map[uint16]int64 `json:"active_write_off"` //当前数据文件的写偏移（分类型）
 }
 
 // LoadMeta 加载数据库信息
 func LoadMeta(path string) (m *DBMeta, err error) {
-	m = &DBMeta{}
+	m = &DBMeta{ActiveWriteOff: make(map[uint16]int64)}
 
 	file, err := os.OpenFile(path, os.O_RDONLY, 0600) // 只读权限打开path路径下的文件
 	if err != nil {

@@ -105,9 +105,9 @@ func (db *MinDB) Get(key []byte) ([]byte, error) {
 
 	//如果只有key在内存中，那么需要从db file中获取value
 	if db.config.IdxMode == KeyOnlyRamMode {
-		df := db.activeFile
-		if idx.FileId != db.activeFileId {
-			df = db.archFiles[idx.FileId]
+		df := db.activeFile[String]
+		if idx.FileId != db.activeFileIds[String] {
+			df = db.archFiles[String][idx.FileId]
 		}
 
 		e, err := df.Read(idx.Offset)
@@ -413,9 +413,9 @@ func (db *MinDB) doSet(key, value []byte) (err error) {
 			KeySize: uint32(len(e.Meta.Key)),
 			Key:     e.Meta.Key,
 		},
-		FileId:    db.activeFileId,
+		FileId:    db.activeFileIds[String],
 		EntrySize: e.Size(),
-		Offset:    db.activeFile.Offset - int64(e.Size()),
+		Offset:    db.activeFile[String].Offset - int64(e.Size()),
 	}
 
 	if err = db.buildIndex(e, idx); err != nil {
