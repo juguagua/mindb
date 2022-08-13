@@ -14,7 +14,7 @@ const expireHeadSize = 12
 // Expires 过期字典定义
 type Expires map[string]uint32
 
-// ExpiresValue expires value
+// ExpiresValue 过期值
 type ExpiresValue struct {
 	Key      []byte
 	KeySize  uint32
