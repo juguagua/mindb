@@ -23,7 +23,7 @@ func newListIdx() *ListIdx {
 
 // LPush 在列表的头部添加元素，返回添加后的列表长度
 func (db *MinDB) LPush(key []byte, values ...[]byte) (res int, err error) {
-	if err := db.checkKeyValue(key, values...); err != nil {
+	if err = db.checkKeyValue(key, values...); err != nil {
 		return
 	}
 
@@ -44,7 +44,7 @@ func (db *MinDB) LPush(key []byte, values ...[]byte) (res int, err error) {
 
 // RPush 在列表的尾部添加元素，返回添加后的列表长度
 func (db *MinDB) RPush(key []byte, values ...[]byte) (res int, err error) {
-	if err := db.checkKeyValue(key, values...); err != nil {
+	if err = db.checkKeyValue(key, values...); err != nil {
 		return
 	}
 

@@ -99,7 +99,7 @@ func (db *MinDB) HGetAll(key []byte) [][]byte {
 // 返回被成功移除的元素个数
 func (db *MinDB) HDel(key []byte, field ...[]byte) (res int, err error) {
 
-	if err := db.checkKeyValue(key, nil); err != nil {
+	if err = db.checkKeyValue(key, nil); err != nil {
 		return
 	}
 

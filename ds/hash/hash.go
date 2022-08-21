@@ -7,7 +7,7 @@ type (
 	}
 
 	// Record hash record to save
-	Record map[string]map[string]any
+	Record map[string]map[string][]byte
 )
 
 // New new a hash ds
@@ -20,7 +20,7 @@ func New() *Hash {
 //如果域 field 已经存在于哈希表中， 那么它的旧值将被新值 value 覆盖
 func (h *Hash) HSet(key string, field string, value []byte) int {
 	if !h.exist(key) {
-		h.record[key] = make(map[string]any)
+		h.record[key] = make(map[string][]byte)
 	}
 
 	h.record[key][field] = value
