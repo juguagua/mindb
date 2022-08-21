@@ -79,7 +79,7 @@ var commandList = [][]string{
 var host = flag.String("h", "127.0.0.1", "the mindb server host, default 127.0.0.1")
 var port = flag.Int("p", 5200, "the mindb server port, default 5200")
 
-const cmdHistoryPath = "/tmp/rosedb-cli"
+const cmdHistoryPath = "/tmp/mindb-cli"
 
 func main() {
 	flag.Parse()

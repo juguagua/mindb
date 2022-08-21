@@ -19,11 +19,11 @@ func init() {
 	fmt.Println(string(banner))
 }
 
-var config = flag.String("config", "", "the config file for rosedb")
+var config = flag.String("config", "", "the config file for mindb")
 var dirPath = flag.String("dir_path", "", "the dir path for the database")
 
 func main() {
-	flag.Parse()
+	flag.Parse() // 解析配置
 
 	//set the config
 	var cfg mindb.Config
@@ -52,14 +52,14 @@ func main() {
 
 	server, err := cmd.NewServer(cfg)
 	if err != nil {
-		log.Printf("create rosedb server err: %+v\n", err)
+		log.Printf("create mindb server err: %+v\n", err)
 		return
 	}
 	go server.Listen(cfg.Addr)
 
 	<-sig
 	server.Stop()
-	log.Println("rosedb is ready to exit, bye...")
+	log.Println("mindb is ready to exit, bye...")
 }
 
 func newConfigFromFile(config string) (*mindb.Config, error) {
