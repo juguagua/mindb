@@ -45,17 +45,17 @@ func main() {
 		cfg.DirPath = *dirPath
 	}
 
-	//listen the server
+	// 监听中断事件
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill, syscall.SIGHUP,
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
-	server, err := cmd.NewServer(cfg)
+	server, err := cmd.NewServer(cfg) // 新建一个server
 	if err != nil {
 		log.Printf("create mindb server err: %+v\n", err)
 		return
 	}
-	go server.Listen(cfg.Addr)
+	go server.Listen(cfg.Addr) // 启动一个goroutine处理server
 
 	<-sig
 	server.Stop()

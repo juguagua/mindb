@@ -82,10 +82,10 @@ var port = flag.Int("p", 5200, "the mindb server port, default 5200")
 const cmdHistoryPath = "/tmp/mindb-cli"
 
 func main() {
-	flag.Parse()
+	flag.Parse() // 解析配置
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", addr) // 与服务器建立连接
 	if err != nil {
 		log.Println("tcp dial err: ", err)
 		return
@@ -94,7 +94,7 @@ func main() {
 	line := liner.NewLiner()
 	defer line.Close()
 
-	line.SetCtrlCAborts(true)
+	line.SetCtrlCAborts(true) // 设置当ctrl + c的时候退出
 	line.SetCompleter(func(li string) (res []string) {
 		for _, c := range commandList {
 			if strings.HasPrefix(c[0], strings.ToUpper(li)) {
@@ -164,13 +164,13 @@ func main() {
 				continue
 			}
 
-			wInfo := wrapCmdInfo(cmd)
-			_, err := conn.Write(wInfo)
+			wInfo := wrapCmdInfo(cmd)   // 获取到命令
+			_, err := conn.Write(wInfo) // 发送给服务端
 			if err != nil {
 				fmt.Println(err)
 			}
 
-			reply := readReply(conn)
+			reply := readReply(conn) // 读取响应
 			fmt.Println(reply)
 		}
 	}

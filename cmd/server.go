@@ -49,23 +49,23 @@ func NewServer(config mindb.Config) (*Server, error) {
 // Listen listen the server
 func (s *Server) Listen(addr string) {
 	var err error
-	s.listener, err = net.Listen("tcp", addr)
+	s.listener, err = net.Listen("tcp", addr) // 启动一个tcp服务监听端口
 	if err != nil {
 		log.Printf("tcp listen err: %+v\n", err)
 		return
 	}
 
-	log.Println("rosedb is running, ready to accept connections.")
+	log.Println("mindb is running, ready to accept connections.")
 	for {
 		select {
 		case <-s.done:
 			return
 		default:
-			conn, err := s.listener.Accept()
+			conn, err := s.listener.Accept() // 获取客户端的连接
 			if err != nil {
 				continue
 			}
-			go s.handleConn(conn)
+			go s.handleConn(conn) // 启动一个goroutine异步地处理这个连接
 		}
 	}
 }
@@ -80,7 +80,7 @@ func (s *Server) Stop() {
 	s.closed = true
 	s.listener.Close()
 	if err := s.db.Close(); err != nil {
-		fmt.Printf("close rosedb err: %+v\n", err)
+		fmt.Printf("close mindb err: %+v\n", err)
 	}
 	s.mu.Unlock()
 }
@@ -88,7 +88,7 @@ func (s *Server) Stop() {
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(time.Hour * connInterval))
+		_ = conn.SetReadDeadline(time.Now().Add(time.Hour * connInterval)) // 设置读取的截止时间，即一段时间内没有数据就主动断开连接
 
 		bufReader := bufio.NewReader(conn)
 		b := make([]byte, 4)
@@ -109,9 +109,9 @@ func (s *Server) handleConn(conn net.Conn) {
 				break
 			}
 
-			cmdAndArgs := reg.FindAllString(string(data), -1)
-			reply := s.handleCmd(cmdAndArgs[0], cmdAndArgs[1:])
-			info := wrapReplyInfo(reply)
+			cmdAndArgs := reg.FindAllString(string(data), -1)   // 获取到命令
+			reply := s.handleCmd(cmdAndArgs[0], cmdAndArgs[1:]) // 执行命令
+			info := wrapReplyInfo(reply)                        // 返回响应
 			_, err = conn.Write(info)
 			if err != nil {
 				log.Printf("write reply err: %+v\n", err)

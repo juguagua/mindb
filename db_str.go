@@ -244,41 +244,43 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 		offset = 0
 	}
 
+	// 检查key value是否符合规范
 	if err = db.checkKeyValue([]byte(prefix), nil); err != nil {
 		return
 	}
-
+	// 对索引加读锁
 	db.strIndex.mu.RLock()
 	defer db.strIndex.mu.RUnlock()
+	// 找到第一个和给定前缀匹配的节点
 	e := db.strIndex.idxList.FindPrefix([]byte(prefix))
 
-	if limit > 0 {
+	if limit > 0 { // 往后偏移offset个满足前缀的key
 		for i := 0; i < offset && e != nil && strings.HasPrefix(string(e.Key()), prefix); i++ {
 			e = e.Next()
 		}
 	}
 
 	for e != nil && strings.HasPrefix(string(e.Key()), prefix) && limit != 0 {
-		item := e.Value().(*index.Indexer)
+		item := e.Value().(*index.Indexer)  //item为e相应的索引信息
 		var value []byte
 
-		if db.config.IdxMode == KeyOnlyRamMode {
-			value, err = db.Get(e.Key())
+		if db.config.IdxMode == KeyOnlyRamMode {  // 如果只有key存在内存
+			value, err = db.Get(e.Key())   // 就去磁盘中相应位置拿到value值
 			if err != nil {
 				return
 			}
-		} else {
+		} else {      // 如果键值都在内存，直接从索引信息中拿到value值
 			if item != nil {
 				value = item.Meta.Value
 			}
 		}
 
-		expired := db.expireIfNeeded(e.Key())
-		if !expired {
+		expired := db.expireIfNeeded(e.Key())  // 检查key是否过期
+		if !expired {       // 如果没有过期就加入到结果集中
 			val = append(val, value)
 			e = e.Next()
 		}
-		if limit > 0 && !expired {
+		if limit > 0 && !expired {   // limit减一然后进入下一个循环
 			limit--
 		}
 	}
@@ -288,21 +290,21 @@ func (db *MinDB) PrefixScan(prefix string, limit, offset int) (val [][]byte, err
 // RangeScan 范围扫描，查找 key 从 start 到 end 之间的数据
 func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 
-	node := db.strIndex.idxList.Get(start)
-	if node == nil {
+	node := db.strIndex.idxList.Get(start)  // 通过跳表的查找接口直接找到start对应的节点
+	if node == nil {    // 如果节点为空，则返回错误
 		return nil, ErrKeyNotExist
 	}
 
-	db.strIndex.mu.RLock()
+	db.strIndex.mu.RLock()    // 加读锁对跳表进行操作
 	defer db.strIndex.mu.RUnlock()
 
-	for node != nil && bytes.Compare(node.Key(), end) <= 0 {
-		if db.expireIfNeeded(node.Key()) {
+	for node != nil && bytes.Compare(node.Key(), end) <= 0 {  // 从start节点开始往后遍历，直接和end节点比较
+		if db.expireIfNeeded(node.Key()) {   // 如果中间某个节点过期了，就跳过该节点
 			node = node.Next()
 			continue
 		}
 		var value []byte
-		if db.config.IdxMode == KeyOnlyRamMode {
+		if db.config.IdxMode == KeyOnlyRamMode {  // 仍然是要判断配置的是键值都在内存中还是另一种
 			value, err = db.Get(node.Key())
 			if err != nil {
 				return nil, err
@@ -311,7 +313,7 @@ func (db *MinDB) RangeScan(start, end []byte) (val [][]byte, err error) {
 			value = node.Value().(*index.Indexer).Meta.Value
 		}
 
-		val = append(val, value)
+		val = append(val, value)    // 将查出来的value放入结果集中
 		node = node.Next()
 	}
 
