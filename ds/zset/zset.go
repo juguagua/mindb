@@ -50,30 +50,30 @@ func New() *SortedSet {
 
 // ZAdd 将 member 元素及其 score 值加入到有序集 key 当中
 func (z *SortedSet) ZAdd(key string, score float64, member string) {
-	if !z.exist(key) {
+	if !z.exist(key) { // 每个key对应一个ZSet，如果不存在则创建
 
-		node := &SortedSetNode{
+		node := &SortedSetNode{ // 每个ZSet包含一个跳表和一个值为跳表节点的map字典
 			dict: make(map[string]*sklNode),
 			skl:  newSkipList(),
 		}
 		z.record[key] = node
 	}
 
-	item := z.record[key]
-	v, exist := item.dict[member]
+	item := z.record[key]         // 拿到key对应ZSet
+	v, exist := item.dict[member] // 从ZSet字典中拿到member对应的节点（跳表节点）
 
 	var node *sklNode
-	if exist {
+	if exist { // 如果member对应的跳表节点存在，就覆盖原值
 		if score != v.score {
-			item.skl.sklDelete(v.score, member)
-			node = item.skl.sklInsert(score, member)
+			item.skl.sklDelete(v.score, member)      // 删除跳表中原值
+			node = item.skl.sklInsert(score, member) // 插入跳表中新值
 		}
 	} else {
 		node = item.skl.sklInsert(score, member)
 	}
 
 	if node != nil {
-		item.dict[member] = node
+		item.dict[member] = node // 更新字典中的值
 	}
 }
 
@@ -83,12 +83,12 @@ func (z *SortedSet) ZScore(key string, member string) float64 {
 		return math.MinInt64
 	}
 
-	node, exist := z.record[key].dict[member]
+	node, exist := z.record[key].dict[member] // 取出key对应有序集合中的member对应的跳表节点
 	if !exist {
 		return math.MinInt64
 	}
 
-	return node.score
+	return node.score // 返回该跳表节点的score值
 }
 
 // ZCard 返回指定集合key中的元素个数
@@ -97,7 +97,7 @@ func (z *SortedSet) ZCard(key string) int {
 		return 0
 	}
 
-	return len(z.record[key].dict)
+	return len(z.record[key].dict) // 有序集合的元素个数就是
 }
 
 // ZRank 返回有序集 key 中成员 member 的排名。其中有序集成员按 score 值递增(从小到大)顺序排列
@@ -107,12 +107,12 @@ func (z *SortedSet) ZRank(key, member string) int64 {
 		return -1
 	}
 
-	v, exist := z.record[key].dict[member]
+	v, exist := z.record[key].dict[member] // 拿到member对应的跳表节点
 	if !exist {
 		return -1
 	}
 
-	rank := z.record[key].skl.sklGetRank(v.score, member)
+	rank := z.record[key].skl.sklGetRank(v.score, member) // 调用跳表的GetRank方法得到指定score且元素为member的排名
 	rank--
 
 	return rank
@@ -504,21 +504,22 @@ func (skl *skipList) sklDelete(score float64, member string) {
 	}
 }
 
+// 得到跳表中分值为score，且成员为member的排名（从小到大）
 func (skl *skipList) sklGetRank(score float64, member string) int64 {
-	var rank uint64 = 0
-	p := skl.head
+	var rank uint64 = 0 // 排名初始为0，表示最小
+	p := skl.head       // 从跳表头开始
 
-	for i := skl.level - 1; i >= 0; i-- {
-		for p.level[i].forward != nil &&
-			(p.level[i].forward.score < score ||
+	for i := skl.level - 1; i >= 0; i-- { // 从最高层往下遍历
+		for p.level[i].forward != nil && // 如果当前节点在当前层的next节点存在
+			(p.level[i].forward.score < score || // 如果next节点的score小于目标score或者两个score相等但是next的member小于等于目标member
 				(p.level[i].forward.score == score && p.level[i].forward.member <= member)) {
 
-			rank += p.level[i].span
-			p = p.level[i].forward
+			rank += p.level[i].span // 排名是最底层的节点排名，span记录当前层当前节点与前一个节点之间的间隔数
+			p = p.level[i].forward  // 移动到下一个节点
 		}
 
 		if p.member == member {
-			return int64(rank)
+			return int64(rank) // 返回计算到的rank
 		}
 	}
 

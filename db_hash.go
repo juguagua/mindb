@@ -29,7 +29,7 @@ func (db *MinDB) HSet(key, field, value []byte) (res int, err error) {
 		return
 	}
 
-	// If the existed value is the same as the set value, nothing will be done.
+	// 如果要设置的value和当前value相同，则不做修改，直接返回
 	oldVal := db.HGet(key, field)
 	if bytes.Compare(oldVal, value) == 0 {
 		return

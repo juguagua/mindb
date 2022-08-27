@@ -19,7 +19,7 @@ type DataType = uint16
 
 // 数据类型定义
 const (
-	String DataType = iota
+	String DataType = iota // 0表示string
 	List
 	Hash
 	Set
@@ -65,7 +65,7 @@ const (
 
 // 建立字符串索引
 func (db *MinDB) buildStringIndex(idx *index.Indexer, opt uint16) {
-	if db.listIndex == nil || idx == nil {
+	if db.strIndex == nil || idx == nil {
 		return
 	}
 
@@ -188,18 +188,18 @@ func (db *MinDB) loadIdxFromFiles() error {
 
 	wg := sync.WaitGroup{}
 	wg.Add(5)
-	for dataType := 0; dataType < 5; dataType++ {
-		go func(dType uint16) {
-			defer func() {
+	for dataType := 0; dataType < 5; dataType++ { // 遍历五种数据类型的文件
+		go func(dType uint16) { // 分别开启一个goroutine去执行
+			defer func() { // 每个goroutine最后要将wg减一
 				wg.Done()
 			}()
 
 			// archived files
-			var fileIds []int
-			dbFile := make(map[uint32]*storage.DBFile)
-			for k, v := range db.archFiles[dType] {
-				dbFile[k] = v
-				fileIds = append(fileIds, int(k))
+			var fileIds []int                          // 记录文件id
+			dbFile := make(map[uint32]*storage.DBFile) // 记录文件id与数据文件信息的map
+			for k, v := range db.archFiles[dType] {    // 遍历当前类型的所有文件
+				dbFile[k] = v                     // 构造id与文件信息的map
+				fileIds = append(fileIds, int(k)) // 记录文件id
 			}
 
 			// active file

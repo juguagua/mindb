@@ -7,14 +7,14 @@ import (
 
 //List是列表的实现，由于Golang中已经存在对列表的支持，因此只做一层简单的封装
 
-// InsertOption insert option for LInsert
+// InsertOption Insert的头插还是尾插
 type InsertOption uint8
 
 const (
-	// Before insert before
+	// Before 头插
 	Before InsertOption = iota
 
-	// After insert after
+	// After 尾插
 	After
 )
 
@@ -22,12 +22,12 @@ const (
 var existFlag = struct{}{}
 
 type (
-	// List list idx
+	// List list索引结构
 	List struct {
-		// record saves the List of a specified key.
+		// record 保存list结构的kv映射
 		record Record
 
-		// values saves the values of a List, help checking if a value exists in List.
+		// values 保存list中的value值，用以辅助判断某个值是否存在该list
 		values map[string]map[string]struct{}
 	}
 
